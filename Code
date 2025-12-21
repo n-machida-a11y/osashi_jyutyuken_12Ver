@@ -15,7 +15,12 @@ const SHEETS = {
   ITEMS: "受注明細",
   SCHEDULE: "請求スケジュール",
   REMARKS: "受注備考",
-  STAFF: "担当者マスタ"
+  STAFF: "担当者マスタ",
+  CUSTOMER: "得意先マスタ",
+  // ★既存アプリのログ（読み取り専用）
+  LOG_EX: "出荷済明細",
+  // ★新アプリ用のステータス管理（読み書き用・新規作成してください）
+  APP_STATUS: "受注兼_出荷管理" 
 };
 
 function doGet(e) {
@@ -139,6 +144,11 @@ function getOrderData(orderNo, summaryCode) {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const staffMap = getStaffMap(ss, logs);
+    const customerNoteMap = getCustomerNoteMap(ss);
+    
+    // ★マージ用：既存アプリのログと、新アプリの管理データを両方取得
+    const historyMap = getCombinedHistoryMap(ss, orderNo);
+    
     const sheet = ss.getSheetByName(SHEETS.HEADER);
     if (!sheet) return createMockData(orderNo, mode, logs, "シートが見つかりません");
 
@@ -183,10 +193,21 @@ function getOrderData(orderNo, summaryCode) {
     const schedule = getRelatedData(SHEETS.SCHEDULE);
     const remarks = getRelatedData(SHEETS.REMARKS);
 
-    const headerData = mapHeaderData(headerRowObj, mode, staffMap);
+    const headerData = mapHeaderData(headerRowObj, mode, staffMap, customerNoteMap);
     
-    // 明細: 数量0を除外
-    const itemsData = items.map(mapItemData).filter(item => {
+    // 明細: 数量0を除外 + ★出荷履歴のマージ
+    const itemsData = items.map(row => {
+      const mapped = mapItemData(row);
+      // 履歴マップ(既存アプリor新アプリ)にデータがあればマージ
+      if (mapped.id && historyMap[mapped.id]) {
+        mapped.shipped = historyMap[mapped.id].shipped;
+        mapped.shippedDate = historyMap[mapped.id].shippedDate;
+      } else {
+        mapped.shipped = false;
+        mapped.shippedDate = "";
+      }
+      return mapped;
+    }).filter(item => {
       const qty = Number(item.quantity);
       return item.quantity !== "" && item.quantity != null && (!isNaN(qty) && qty !== 0);
     });
@@ -209,6 +230,59 @@ function getOrderData(orderNo, summaryCode) {
   }
 }
 
+// ★出荷履歴マップの生成（2つのシートを統合）
+function getCombinedHistoryMap(ss, orderNo) {
+  const map = {};
+  
+  // 1. 既存アプリのログ（出荷済明細）を読む
+  try {
+    const logSheet = ss.getSheetByName(SHEETS.LOG_EX);
+    if (logSheet) {
+      const values = logSheet.getDataRange().getValues();
+      const headers = values[0].map(h => String(h).trim());
+      const idIdx = headers.indexOf("受注明細No");
+      const dateIdx = headers.indexOf("出荷日");
+      
+      if (idIdx !== -1) {
+        for (let i = 1; i < values.length; i++) {
+          const id = String(values[i][idIdx]).trim();
+          const date = dateIdx !== -1 ? formatDate(values[i][dateIdx]) : "";
+          // 日付が入っていれば出荷済みとみなす
+          if (id && date) {
+            map[id] = { shipped: true, shippedDate: date };
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 2. 新アプリの管理シート（受注兼_出荷管理）を読んで上書き/追加
+  try {
+    const statusSheet = ss.getSheetByName(SHEETS.APP_STATUS);
+    if (statusSheet) {
+      const values = statusSheet.getDataRange().getValues();
+      const headers = values[0].map(h => String(h).trim());
+      const idIdx = headers.indexOf("受注明細No");
+      const shipIdx = headers.indexOf("出荷済");
+      const dateIdx = headers.indexOf("出荷日");
+
+      if (idIdx !== -1) {
+        for (let i = 1; i < values.length; i++) {
+          const id = String(values[i][idIdx]).trim();
+          const isShipped = String(values[i][shipIdx]) === 'TRUE';
+          const date = dateIdx !== -1 ? formatDate(values[i][dateIdx]) : "";
+          
+          if (id && isShipped) {
+            map[id] = { shipped: true, shippedDate: date };
+          }
+        }
+      }
+    }
+  } catch(e) {}
+
+  return map;
+}
+
 function getStaffMap(ss, logs) {
   const map = {};
   try {
@@ -227,10 +301,30 @@ function getStaffMap(ss, logs) {
   return map;
 }
 
+function getCustomerNoteMap(ss) {
+  const map = {};
+  try {
+    const sheet = ss.getSheetByName(SHEETS.CUSTOMER);
+    if (!sheet) return map;
+    const values = sheet.getDataRange().getValues();
+    if (values.length < 2) return map;
+    const headers = values[0].map(h => String(h).trim());
+    const codeIdx = headers.indexOf("得意先コード");
+    const noteIdx = headers.indexOf("得意先備考");
+    if (codeIdx === -1 || noteIdx === -1) return map;
+
+    for (let i = 1; i < values.length; i++) {
+      const code = String(values[i][codeIdx]).trim();
+      if (code) map[code] = values[i][noteIdx];
+    }
+  } catch(e) {}
+  return map;
+}
+
 function createMockData(orderNo, mode, logs, msg) {
   return {
     success: false, mode: mode, 
-    header: { formId: "SYSTEM MSG", title: msg, orderNo: orderNo || "---" }, 
+    header: { formId: "SYSTEM MSG", title: msg, orderNo: orderNo || "---", dataStatus: 'temporary' }, 
     items: [], schedule: [], remarks: [], totals: {subtotal:0, tax:0, total:0}, logs: logs
   };
 }
@@ -244,29 +338,37 @@ function saveOrderData(saveData) {
     updateSheet(ss, SHEETS.HEADER, '受注No', orderNo, reverseMapHeader(saveData.header));
 
     // 明細保存
-    // ★重要: タブ(モード)ごとに保存される
     saveData.items.forEach(item => {
       if(!item.id || String(item.id).startsWith('pad-')) return;
+      
       const dbItem = {
         '受注No': orderNo, '受注明細No': item.id,
         '商品名': item.productName, '規格・型番': item.spec, '数量': item.quantity, '単位': item.unit,
         '単価': item.unitPrice, '受注金額': item.amount, '原単価': item.costPrice, '原価金額': item.costAmount,
         '明細納期': item.arrangementDate, '備考': item.note, 'シリアルNo': item.serialNumber,
-        '種別': saveData.mode // ★New: 明細にも種別を持たせる
+        '種別': saveData.mode
       };
       updateOrAddRow(ss, SHEETS.ITEMS, '受注明細No', item.id, dbItem);
+
+      // ★出荷状態の保存（新アプリ専用シートへ）
+      // ※既存アプリのログ（出荷済明細）は汚さない
+      const dbStatus = {
+        '受注明細No': item.id,
+        '出荷済': item.shipped ? 'TRUE' : 'FALSE',
+        '出荷日': item.shippedDate
+      };
+      updateOrAddRow(ss, SHEETS.APP_STATUS, '受注明細No', item.id, dbStatus);
     });
 
     // スケジュール保存
-    // ★追加: 「種別」と「受注明細No」を保存
     saveData.schedule.forEach(sch => {
       if(!sch.id || String(sch.id).startsWith('pad-')) return;
       const dbSch = {
         '受注No': orderNo, '請求ID': sch.id,
         '回数': sch.count, '請求売上日': sch.billingDate, '請求金額': sch.amount, 
         '原価金額': sch.costReference, '伝票No': sch.slipNo, '締め日': sch.closingDate, 'チェック状況': sch.checkStatus,
-        '種別': saveData.mode, // ★New: DBから取得した種別
-        '受注明細No': "" // ★New: 明細紐づけがあればここに入れるが、現状のロジックでは空
+        '種別': saveData.mode,
+        '行受注No': sch.rowOrderNo
       };
       updateOrAddRow(ss, SHEETS.SCHEDULE, '請求ID', sch.id, dbSch);
     });
@@ -281,6 +383,14 @@ function saveOrderData(saveData) {
       updateOrAddRow(ss, SHEETS.REMARKS, '備考No', rmk.id, dbRmk);
     });
 
+    // 得意先マスタの備考更新
+    if (saveData.header.customerCode) {
+       updateOrAddRow(ss, SHEETS.CUSTOMER, '得意先コード', saveData.header.customerCode, {
+          '得意先コード': saveData.header.customerCode,
+          '得意先備考': saveData.header.customerNote
+       });
+    }
+
     return { success: true, message: "保存しました" };
   } catch(e) {
     return { success: false, message: "保存エラー: " + e.toString() };
@@ -288,12 +398,22 @@ function saveOrderData(saveData) {
 }
 
 function updateOrAddRow(ss, sheetName, keyColName, keyVal, dataObj) {
-  const sheet = ss.getSheetByName(sheetName);
-  if (!sheet) return;
+  let sheet = ss.getSheetByName(sheetName);
+  
+  // ★シートがなければ作成する（新アプリ用シート対策）
+  if (!sheet) {
+    if (sheetName === SHEETS.APP_STATUS) {
+      sheet = ss.insertSheet(SHEETS.APP_STATUS);
+      // ヘッダー生成
+      sheet.appendRow(['受注明細No', '出荷済', '出荷日']);
+    } else {
+      return; // 他のシートがない場合は何もしない
+    }
+  }
+
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).trim());
   const keyColIndex = headers.indexOf(keyColName);
   
-  // カラムが存在しない場合は自動追加はしない（エラーにはしない）
   if (keyColIndex === -1) return; 
 
   const data = sheet.getDataRange().getValues();
@@ -307,21 +427,17 @@ function updateOrAddRow(ss, sheetName, keyColName, keyVal, dataObj) {
     }
   }
   
-  // データオブジェクトのマッピング
   const rowData = headers.map(h => {
-    // 日付型などは文字列化
     let val = dataObj.hasOwnProperty(h) ? dataObj[h] : null;
     if (val instanceof Date) val = Utilities.formatDate(val, Session.getScriptTimeZone(), "yyyy/MM/dd");
     return val;
   });
 
   if (rowIndex > 0) {
-    // 既存行更新: データがある列だけ更新し、undefinedの列は元の値を維持
     const currentRow = sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0];
     const newRow = rowData.map((val, i) => (val !== null && val !== undefined) ? val : currentRow[i]);
     sheet.getRange(rowIndex, 1, 1, headers.length).setValues([newRow]);
   } else {
-    // 新規行追加: null/undefinedは空文字に
     const cleanRow = rowData.map(v => (v === null || v === undefined) ? "" : v);
     sheet.appendRow(cleanRow);
   }
@@ -331,32 +447,65 @@ function updateSheet(ss, sheetName, keyColName, keyVal, dataObj) {
   updateOrAddRow(ss, sheetName, keyColName, keyVal, dataObj);
 }
 
-function mapHeaderData(row, mode, staffMap) {
+function mapHeaderData(row, mode, staffMap, customerNoteMap) {
   if (!row) return {};
   const getVal = (key) => (row[key] !== undefined ? String(row[key]) : "");
   const staffCode = getVal('担当者コード');
   const staffName = staffMap[staffCode] || staffCode;
+  const customerCode = getVal('得意先コード');
   
   let memo = getVal('特記事項') || getVal('差し戻し理由') || "";
   if (memo === "てすと") memo = "";
+
+  // 出荷日・納期・時間帯・情報No・出荷No・配送方法を動的に取得 (最大10件)
+  const shippingDetails = {};
+  for (let i = 1; i <= 10; i++) {
+    shippingDetails[`shipDate${i}`] = getVal(`出荷日${i}`);
+    shippingDetails[`deliveryDate${i}`] = getVal(`納期${i}`);
+    shippingDetails[`deliveryTime${i}`] = getVal(`時間帯${i}`);
+    shippingDetails[`informationNo${i}`] = getVal(`情報No${i}`);
+    shippingDetails[`shippingNo${i}`] = getVal(`出荷No${i}`);
+    shippingDetails[`deliveryMethod${i}`] = getVal(`配送方法${i}`); 
+  }
+
+  const collectionMethod2 = getVal('回収種別２'); 
 
   return {
     formId: "様式 03-3BU-004-6 170410",
     title: mode === 'sales' ? "受注兼発送依頼書" : (mode === 'rental' ? "レンタル受注兼発送依頼書" : "通信費 受注兼発送依頼書"),
     tag: getVal('タグ'), orderNo: getVal('受注No'), estimateNo: "", 
     date: formatDate(row['受注日']), slipDate: formatDate(row['伝票記入日']), 
-    customerCode: getVal('得意先コード'), customerName: getVal('得意先名'),
+    customerCode: customerCode, customerName: getVal('得意先名'),
     customerZipCode: getVal('郵便番号'), customerAddress: (getVal('住所１')||"") + (getVal('住所２')||""),
     customerTel: getVal('会社TEL'), customerFax: getVal('会社FAX'),
+    customerNote: customerNoteMap[customerCode] || "", 
     shipName: getVal('直送先名'), shipAddress: getVal('直送先名称_出荷明細'), shipTel: "", 
-    salesRepInternalMain: staffName, salesRepClient: getVal('先方担当者名'), departmentName: getVal('部門コード'), 
+    salesRepInternalMain: staffName, 
+    salesRepClient: getVal('先方担当者名'), 
+    
+    departmentName: getVal('部門コード'), 
     periodStartDate: formatDate(row['レンタル開始日']), periodEndDate: formatDate(row['レンタル終了日']),
-    periodDuration: "", periodNote: "", closingDate: getVal('請求締日'), paymentDate: "", collectionMethod: getVal('回収種別１'),
+    periodDuration: "", periodNote: "", closingDate: getVal('請求締日'), paymentDate: "", 
+    
+    collectionMethod: getVal('回収種別１'),
+    defaultCollectionMethod: collectionMethod2,
+
     approvalCreator: { status: getVal('作成者承認'), name: '', date: '' },
     approvalCheck: { status: getVal('営業担当者承認'), name: '', date: '' },
     approvalManager: { status: getVal('部長承認'), name: '', date: '' },
     approvalPresident: { status: getVal('社長承認'), name: '', date: '' },
-    internalMemo: memo, remarks: "", previousOrderNo: getVal('元受注No')
+    internalMemo: memo, remarks: "", previousOrderNo: getVal('元受注No'),
+    
+    salesDate: formatDate(row['売上日']),
+    headerSlipNo: getVal('伝票No'), 
+    siteName: getVal('現場名'),
+    rentalId: getVal('レンタルID'),
+
+    // ★ステータス管理
+    dataStatus: getVal('データステータス') || 'temporary',
+    mergeTargetOrderNo: getVal('統合先受注No'),
+
+    ...shippingDetails
   };
 }
 
@@ -364,16 +513,17 @@ function mapItemData(row) {
   return {
     id: row['受注明細No'], type: 'product', productName: row['商品名'], spec: row['規格・型番'], quantity: row['数量'], unit: row['単位'],
     unitPrice: row['単価'], amount: row['受注金額'], serialNumber: row['シリアルNo'], costPrice: row['原単価'], costAmount: row['原価金額'], arrangementDate: formatDate(row['明細納期']), note: row['備考'],
-    modeType: row['種別'] // ★New: DBから取得した種別
+    modeType: row['種別']
+    // shipped, shippedDate は getOrderData 内でマージ
   };
 }
 
 function mapScheduleData(row) {
-  // ★追加: 種別(mode)を取得
   return {
     id: row['請求ID'], type: 'schedule_row', count: row['回数'], billingDate: formatDate(row['請求売上日']), amount: row['請求金額'],
     costReference: row['原価金額'], slipNo: row['伝票No'], closingDate: formatDate(row['締め日']), checkStatus: row['チェック状況'],
-    modeType: row['種別'] // ★New: DBから取得した種別
+    modeType: row['種別'],
+    rowOrderNo: row['行受注No']
   };
 }
 
@@ -384,12 +534,33 @@ function mapRemarkData(row) {
 }
 
 function reverseMapHeader(header) {
-  return {
+  const base = {
     '受注日': header.date, '得意先コード': header.customerCode, '得意先名': header.customerName,
-    '直送先名': header.shipName, '先方担当者名': header.salesRepClient, '請求締日': header.closingDate, '回収種別１': header.collectionMethod,
+    '直送先名': header.shipName, 
+    '先方担当者名': header.salesRepClient, 
+    '請求締日': header.closingDate, '回収種別１': header.collectionMethod,
     '郵便番号': header.customerZipCode, '住所１': header.customerAddress, '会社TEL': header.customerTel,
-    'レンタル開始日': header.periodStartDate, 'レンタル終了日': header.periodEndDate, '元受注No': header.previousOrderNo, '特記事項': header.internalMemo
+    'レンタル開始日': header.periodStartDate, 'レンタル終了日': header.periodEndDate, '元受注No': header.previousOrderNo, '特記事項': header.internalMemo,
+    
+    '売上日': header.salesDate,
+    '伝票No': header.headerSlipNo,
+    '現場名': header.siteName,
+    'レンタルID': header.rentalId,
+    
+    // ★ステータス保存
+    'データステータス': header.dataStatus,
+    '統合先受注No': header.mergeTargetOrderNo
   };
+
+  for (let i = 1; i <= 10; i++) {
+    if (header[`shipDate${i}`] !== undefined) base[`出荷日${i}`] = header[`shipDate${i}`];
+    if (header[`deliveryDate${i}`] !== undefined) base[`納期${i}`] = header[`deliveryDate${i}`];
+    if (header[`deliveryTime${i}`] !== undefined) base[`時間帯${i}`] = header[`deliveryTime${i}`];
+    if (header[`informationNo${i}`] !== undefined) base[`情報No${i}`] = header[`informationNo${i}`];
+    if (header[`shippingNo${i}`] !== undefined) base[`出荷No${i}`] = header[`shippingNo${i}`];
+    if (header[`deliveryMethod${i}`] !== undefined) base[`配送方法${i}`] = header[`deliveryMethod${i}`];
+  }
+  return base;
 }
 
 function formatDate(val) {
