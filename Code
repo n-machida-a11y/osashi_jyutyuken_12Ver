@@ -17,21 +17,73 @@ const SHEETS = {
   REMARKS: "受注備考",
   STAFF: "担当者マスタ",
   CUSTOMER: "得意先マスタ",
-  // ★既存アプリのログ（読み取り専用）
-  LOG_EX: "出荷済明細",
-  // ★新アプリ用のステータス管理（読み書き用・新規作成してください）
-  APP_STATUS: "受注兼_出荷管理" 
+  // ★変更: 既存のシート名を使用
+  HISTORY: "出荷伝票履歴" 
 };
 
 function doGet(e) {
   try { DriveApp.getFiles(); } catch (e) {} 
   var template = HtmlService.createTemplateFromFile('index');
+  
+  // パラメータ取得
   template.initialOrderNo = e.parameter.orderNo || "";
   template.initialSummaryCode = e.parameter.summaryCode || ""; 
+  
+  var paramRole = e.parameter.userRole || "";
+  var paramUserName = e.parameter.userName || ""; // これが担当者コード(例:0001)
+
+  // userRoleが空で、担当者コードがある場合、マスタから権限を取得する
+  if (!paramRole && paramUserName) {
+    paramRole = getRoleFromStaffMaster(paramUserName);
+  }
+  
+  // 権限判定: "管理者" または "admin" なら admin、それ以外は sales
+  if (paramRole === "管理者" || paramRole === "admin") {
+    template.userRole = "admin";
+  } else {
+    template.userRole = "sales";
+  }
+
+  template.userName = paramUserName || "担当者";
+
   return template.evaluate()
     .setTitle('受注兼発送依頼書')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+// ★追加: 担当者マスタから権限を取得する関数
+function getRoleFromStaffMaster(staffCode) {
+  if (!staffCode) return "";
+  try {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const sheet = ss.getSheetByName(SHEETS.STAFF);
+    if (!sheet) return "";
+    
+    // データ範囲を取得
+    const lastRow = sheet.getLastRow();
+    const lastCol = sheet.getLastColumn();
+    if (lastRow < 2) return ""; // データがない場合
+
+    const data = sheet.getRange(1, 1, lastRow, lastCol).getValues();
+    const headers = data[0].map(h => String(h).trim());
+    
+    const codeIdx = headers.indexOf("担当者コード");
+    const roleIdx = headers.indexOf("権限");
+    
+    if (codeIdx === -1 || roleIdx === -1) return ""; // 必要な列がない場合
+
+    const targetCode = cleanId(staffCode);
+
+    for (let i = 1; i < data.length; i++) {
+      if (cleanId(data[i][codeIdx]) === targetCode) {
+        return String(data[i][roleIdx]).trim(); // "管理者" などを返す
+      }
+    }
+  } catch (e) {
+    console.error("getRoleFromStaffMaster Error: " + e.toString());
+  }
+  return "";
 }
 
 function cleanId(id) {
@@ -146,8 +198,8 @@ function getOrderData(orderNo, summaryCode) {
     const staffMap = getStaffMap(ss, logs);
     const customerNoteMap = getCustomerNoteMap(ss);
     
-    // ★マージ用：既存アプリのログと、新アプリの管理データを両方取得
-    const historyMap = getCombinedHistoryMap(ss, orderNo);
+    // ★マージ用履歴データの取得 (既存シートから)
+    const historyMap = getHistoryMap(ss, orderNo);
     
     const sheet = ss.getSheetByName(SHEETS.HEADER);
     if (!sheet) return createMockData(orderNo, mode, logs, "シートが見つかりません");
@@ -198,7 +250,7 @@ function getOrderData(orderNo, summaryCode) {
     // 明細: 数量0を除外 + ★出荷履歴のマージ
     const itemsData = items.map(row => {
       const mapped = mapItemData(row);
-      // 履歴マップ(既存アプリor新アプリ)にデータがあればマージ
+      // 履歴シートにデータがあれば優先して上書き（マージ）
       if (mapped.id && historyMap[mapped.id]) {
         mapped.shipped = historyMap[mapped.id].shipped;
         mapped.shippedDate = historyMap[mapped.id].shippedDate;
@@ -216,7 +268,7 @@ function getOrderData(orderNo, summaryCode) {
     const remarksData = remarks.map(mapRemarkData);
 
     const subtotal = itemsData.reduce((sum, i) => sum + (Number(i.amount)||0), 0) 
-                   + scheduleData.reduce((sum, s) => sum + (Number(s.amount)||0), 0);
+                    + scheduleData.reduce((sum, s) => sum + (Number(s.amount)||0), 0);
     const tax = Math.floor(subtotal * 0.1); 
 
     return {
@@ -230,56 +282,39 @@ function getOrderData(orderNo, summaryCode) {
   }
 }
 
-// ★出荷履歴マップの生成（2つのシートを統合）
-function getCombinedHistoryMap(ss, orderNo) {
+// ★出荷履歴マップの生成 (出荷伝票履歴シートを利用)
+function getHistoryMap(ss, orderNo) {
   const map = {};
-  
-  // 1. 既存アプリのログ（出荷済明細）を読む
   try {
-    const logSheet = ss.getSheetByName(SHEETS.LOG_EX);
-    if (logSheet) {
-      const values = logSheet.getDataRange().getValues();
-      const headers = values[0].map(h => String(h).trim());
-      const idIdx = headers.indexOf("受注明細No");
-      const dateIdx = headers.indexOf("出荷日");
+    const sheet = ss.getSheetByName(SHEETS.HISTORY);
+    if (!sheet) return map;
+    const values = sheet.getDataRange().getValues();
+    if (values.length < 2) return map;
+    const headers = values[0].map(h => String(h).trim());
+    
+    // ★キー項目: 受注明細No が必須です (シートに追加をお願いします)
+    const idIdx = headers.indexOf("受注明細No"); 
+    const dateIdx = headers.indexOf("出荷日");
+    const orderNoIdx = headers.indexOf("受注No");
+
+    if (idIdx === -1) return map; // 明細No列がなければ取得不可
+
+    for (let i = 1; i < values.length; i++) {
+      // 受注Noでフィルタリングして高速化
+      if (orderNoIdx !== -1 && cleanId(values[i][orderNoIdx]) !== String(orderNo)) continue;
+
+      const id = String(values[i][idIdx]).trim();
+      const dateVal = dateIdx !== -1 ? formatDate(values[i][dateIdx]) : "";
       
-      if (idIdx !== -1) {
-        for (let i = 1; i < values.length; i++) {
-          const id = String(values[i][idIdx]).trim();
-          const date = dateIdx !== -1 ? formatDate(values[i][dateIdx]) : "";
-          // 日付が入っていれば出荷済みとみなす
-          if (id && date) {
-            map[id] = { shipped: true, shippedDate: date };
-          }
-        }
+      if (id) {
+        // 日付が入っていれば出荷済とみなす
+        map[id] = {
+          shipped: !!dateVal,
+          shippedDate: dateVal
+        };
       }
     }
-  } catch (e) {}
-
-  // 2. 新アプリの管理シート（受注兼_出荷管理）を読んで上書き/追加
-  try {
-    const statusSheet = ss.getSheetByName(SHEETS.APP_STATUS);
-    if (statusSheet) {
-      const values = statusSheet.getDataRange().getValues();
-      const headers = values[0].map(h => String(h).trim());
-      const idIdx = headers.indexOf("受注明細No");
-      const shipIdx = headers.indexOf("出荷済");
-      const dateIdx = headers.indexOf("出荷日");
-
-      if (idIdx !== -1) {
-        for (let i = 1; i < values.length; i++) {
-          const id = String(values[i][idIdx]).trim();
-          const isShipped = String(values[i][shipIdx]) === 'TRUE';
-          const date = dateIdx !== -1 ? formatDate(values[i][dateIdx]) : "";
-          
-          if (id && isShipped) {
-            map[id] = { shipped: true, shippedDate: date };
-          }
-        }
-      }
-    }
-  } catch(e) {}
-
+  } catch (e) { /* エラー時は無視 */ }
   return map;
 }
 
@@ -341,6 +376,7 @@ function saveOrderData(saveData) {
     saveData.items.forEach(item => {
       if(!item.id || String(item.id).startsWith('pad-')) return;
       
+      // 1. 受注明細シートへの保存
       const dbItem = {
         '受注No': orderNo, '受注明細No': item.id,
         '商品名': item.productName, '規格・型番': item.spec, '数量': item.quantity, '単位': item.unit,
@@ -350,14 +386,32 @@ function saveOrderData(saveData) {
       };
       updateOrAddRow(ss, SHEETS.ITEMS, '受注明細No', item.id, dbItem);
 
-      // ★出荷状態の保存（新アプリ専用シートへ）
-      // ※既存アプリのログ（出荷済明細）は汚さない
-      const dbStatus = {
-        '受注明細No': item.id,
-        '出荷済': item.shipped ? 'TRUE' : 'FALSE',
-        '出荷日': item.shippedDate
+      // 2. ★出荷伝票履歴シートへの保存 (マージ用)
+      // ※既存の列構造に合わせてデータをセットします。
+      // ※'受注明細No'列を追加していただく前提です。
+      const now = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), "yyyy/MM/dd HH:mm:ss");
+      const dbHistory = {
+        '伝票ID': generateUuid(), // 新規ID
+        '作成日時': now,
+        '受注No': orderNo,
+        '出荷日': item.shippedDate, // アプリで入力された出荷日
+        '得意先コード': saveData.header.customerCode,
+        '得意先名': saveData.header.customerName,
+        '先方担当者名': saveData.header.salesRepClient,
+        '直送先名': saveData.header.shipName,
+        '郵便番号': saveData.header.customerZipCode,
+        '住所１': saveData.header.customerAddress,
+        '会社TEL': saveData.header.customerTel,
+        '担当者名': saveData.header.salesRepInternalMain,
+        '出荷商品コード': "", // 必要ならitem.spec等を入れる
+        '出荷台数': item.quantity,
+        
+        // ★重要: これがないとマージできません
+        '受注明細No': item.id 
       };
-      updateOrAddRow(ss, SHEETS.APP_STATUS, '受注明細No', item.id, dbStatus);
+      // 出荷日が入っている(出荷済) or すでに履歴がある場合は更新/追加
+      // ここではアプリからの保存なので、Upsertします
+      updateOrAddRow(ss, SHEETS.HISTORY, '受注明細No', item.id, dbHistory);
     });
 
     // スケジュール保存
@@ -398,23 +452,12 @@ function saveOrderData(saveData) {
 }
 
 function updateOrAddRow(ss, sheetName, keyColName, keyVal, dataObj) {
-  let sheet = ss.getSheetByName(sheetName);
-  
-  // ★シートがなければ作成する（新アプリ用シート対策）
-  if (!sheet) {
-    if (sheetName === SHEETS.APP_STATUS) {
-      sheet = ss.insertSheet(SHEETS.APP_STATUS);
-      // ヘッダー生成
-      sheet.appendRow(['受注明細No', '出荷済', '出荷日']);
-    } else {
-      return; // 他のシートがない場合は何もしない
-    }
-  }
-
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return;
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map(h => String(h).trim());
   const keyColIndex = headers.indexOf(keyColName);
   
-  if (keyColIndex === -1) return; 
+  if (keyColIndex === -1) return; // キー列がない場合は何もしない
 
   const data = sheet.getDataRange().getValues();
   let rowIndex = -1;
@@ -434,10 +477,12 @@ function updateOrAddRow(ss, sheetName, keyColName, keyVal, dataObj) {
   });
 
   if (rowIndex > 0) {
+    // 更新: 既存行を上書き (null/undefined以外)
     const currentRow = sheet.getRange(rowIndex, 1, 1, headers.length).getValues()[0];
     const newRow = rowData.map((val, i) => (val !== null && val !== undefined) ? val : currentRow[i]);
     sheet.getRange(rowIndex, 1, 1, headers.length).setValues([newRow]);
   } else {
+    // 新規追加
     const cleanRow = rowData.map(v => (v === null || v === undefined) ? "" : v);
     sheet.appendRow(cleanRow);
   }
@@ -569,3 +614,7 @@ function formatDate(val) {
   return String(val);
 }
 function formatJsDate(val) { return val; }
+
+function generateUuid() {
+  return Utilities.getUuid();
+}
