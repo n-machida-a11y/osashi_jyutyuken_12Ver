@@ -82,14 +82,20 @@
     <div id="global-error"></div>
     <div id="root"></div>
     <div id="loading">
-      <div class="spinner"></div>
-      <div class="text-lg font-bold">システムを起動中...</div>
-      <div style="font-size:12px; color:#999; margin-top:10px; text-align:center;">
-        画面が変わらない場合はブラウザを更新してください。<br>
-        (受注No: <?= initialOrderNo ?>)
+      <div class="fixed inset-0 bg-white bg-opacity-80 flex flex-col items-center justify-center z-[10000]">
+        <div class="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
+        <div class="text-lg font-bold">システムを起動中...</div>
       </div>
     </div>
     <div id="debug-log"></div>
+
+    <!-- GASパラメータ受け取り -->
+    <div id="gas-data" style="display:none"
+      data-order-no="<?= initialOrderNo ?>"
+      data-summary-code="<?= initialSummaryCode ?>"
+      data-user-role="<?= userRole ?>"
+      data-user-name="<?= userName ?>">
+    </div>
 
     <datalist id="closing-dates"><option value="10日"/><option value="20日"/><option value="末日"/></datalist>
     <datalist id="payment-dates">
@@ -104,24 +110,31 @@
       <option value="なし" />
       <option value="機械器具設置" /><option value="電気通信" /><option value="保守点検" /><option value="修繕" /><option value="その他" />
     </datalist>
-
-    <!-- ★修正★: AppSheetからのUserSettings等を反映 -->
-    <script>
-      var SERVER_ORDER_NO = <?!= JSON.stringify(initialOrderNo) ?>;
-      var SERVER_SUMMARY_CODE = <?!= JSON.stringify(initialSummaryCode) ?>;
-      var USER_ROLE = <?!= JSON.stringify(userRole) ?>;
-      var USER_NAME = <?!= JSON.stringify(userName) ?>;
-      
-      window.APP_CONFIG = {
-        initialOrderNo: SERVER_ORDER_NO || "",
-        initialSummaryCode: SERVER_SUMMARY_CODE || "",
-        userRole: USER_ROLE || "sales",
-        userName: USER_NAME || "担当者"
-      };
-    </script>
+    <datalist id="shipping-methods">
+      <option value="※工場出荷無し" />
+      <option value="ヤマト(PM)" />
+      <option value="出荷庫準備" />
+      <option value="レターパック" />
+      <option value="航空便" />
+      <option value="ヤマト(AM)" />
+      <option value="佐川" />
+    </datalist>
 
     <script type="text/babel" data-presets="react,typescript">
       const { useState, useEffect, useMemo, useRef, useCallback } = React;
+
+      // --- ユーティリティ関数 ---
+      const generateId = () => crypto.randomUUID();
+      const safeText = (val) => (val === undefined || val === null) ? '' : String(val);
+
+      // --- パラメータ取得 ---
+      const gasDataEl = document.getElementById('gas-data');
+      const CONFIG = {
+        initialOrderNo: gasDataEl?.dataset.orderNo || "232922",
+        initialSummaryCode: gasDataEl?.dataset.summaryCode || "",
+        userRole: gasDataEl?.dataset.userRole || "sales",
+        userName: gasDataEl?.dataset.userName || "担当者"
+      };
 
       // Icons
       const IconWrapper = ({ children, className }) => (
@@ -132,40 +145,17 @@
       const FileSpreadsheet = ({ className }) => <IconWrapper className={className}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="M8 13h2"/><path d="M8 17h2"/><path d="M14 13h2"/><path d="M14 17h2"/></IconWrapper>;
       const Plus = ({ className }) => <IconWrapper className={className}><path d="M5 12h14"/><path d="M12 5v14"/></IconWrapper>;
       const Trash2 = ({ className }) => <IconWrapper className={className}><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></IconWrapper>;
-      const Calculator = ({ className }) => <IconWrapper className={className}><rect width="16" height="20" x="4" y="2" rx="2"/><line x1="8" x2="16" y1="6" y2="6"/><line x1="16" x2="16" y1="14" y2="18"/><path d="M16 10h.01"/><path d="M12 10h.01"/><path d="M8 10h.01"/><path d="M12 14h.01"/><path d="M8 14h.01"/><path d="M12 18h.01"/><path d="M8 18h.01"/></IconWrapper>;
-      const CloudCheck = ({ className }) => <IconWrapper className={className}><path d="M19 16.9A5 5 0 0 0 18 7h-1.26a8 8 0 1 0-11.62 9"/><polyline points="9 11 12 14 22 4"/></IconWrapper>;
-      const Loader = ({ className }) => <IconWrapper className={className}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></IconWrapper>;
       const Mail = ({ className }) => <IconWrapper className={className}><rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></IconWrapper>;
-      const X = ({ className }) => <IconWrapper className={className}><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></IconWrapper>;
-      const Clock = ({ className }) => <IconWrapper className={className}><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></IconWrapper>;
-      const Send = ({ className }) => <IconWrapper className={className}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></IconWrapper>;
-      const AlertTriangle = ({ className }) => <IconWrapper className={className}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></IconWrapper>;
       const Lock = ({ className }) => <IconWrapper className={className}><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></IconWrapper>;
-      const UserCog = ({ className }) => <IconWrapper className={className}><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></IconWrapper>;
+      const Loader = ({ className }) => <IconWrapper className={className}><path d="M21 12a9 9 0 1 1-6.219-8.56"/></IconWrapper>;
+      const CloudCheck = ({ className }) => <IconWrapper className={className}><path d="M19 16.9A5 5 0 0 0 18 7h-1.26a8 8 0 1 0-11.62 9"/><polyline points="9 11 12 14 22 4"/></IconWrapper>;
+      const Send = ({ className }) => <IconWrapper className={className}><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></IconWrapper>;
 
-      // GASパラメータ安全受け取り
-      let INITIAL_ORDER_NO = "";
-      let INITIAL_SUMMARY_CODE = "";
-      const cleanParam = (val) => String(val).replace(/^["']+|["']+$/g, '');
-
-      try {
-        if (window.APP_CONFIG) {
-          INITIAL_ORDER_NO = cleanParam(window.APP_CONFIG.initialOrderNo);
-          INITIAL_SUMMARY_CODE = cleanParam(window.APP_CONFIG.initialSummaryCode);
-        }
-      } catch (e) {
-        console.error("Param Error", e);
-      }
-
-      // --- ユーティリティ関数 ---
-      const generateId = () => crypto.randomUUID();
-      const safeText = (val) => (val === undefined || val === null) ? '' : String(val);
-
-      // --- 数値入力コンポーネント（3桁区切り対応 + マスキング機能） ---
+      // 数値入力コンポーネント (3桁区切り + マスキング)
       const NumberInput = ({ value, onChange, className, placeholder, readOnly, textAlign = 'right', isMasked = false }) => {
         const [isFocused, setIsFocused] = useState(false);
         const displayValue = useMemo(() => {
-          if (isMasked) return '0'; // ★仮状態なら0表示
+          if (isMasked) return '0';
           if (isFocused) return value; 
           if (value === '' || value === null || value === undefined) return '';
           const num = Number(value);
@@ -197,17 +187,15 @@
       const SingleOrderSheet = ({ data, isActive, onChange, onSave, onExportExcel, allTabs, tabId, saveStatus, currentUser }) => {
         const { mode, header, items, schedule, remarks, totals, paymentConditionType, paymentConditionDetail } = data;
         
-        const [isIndefinite, setIsIndefinite] = useState(false);
         const [shippingRowCount, setShippingRowCount] = useState(3);
-        const [showMergeModal, setShowMergeModal] = useState(false); 
 
-        // ★ステータス判定
         const isTemporary = header.dataStatus === 'temporary';
-        // ★提出済み判定（編集ロック用）
         const isSubmitted = header.dataStatus === 'submitted';
-        // ★ロック状態（提出済かつ、自分が管理者権限を持っていない場合）
-        // 営業事務(admin)なら提出済みでも編集・解除可能
+        const isReplacement = header.dataStatus === 'replacement';
         const isLocked = isSubmitted && currentUser.role !== 'admin';
+
+        // 管理者権限の判定
+        const isAdmin = currentUser.role === 'admin';
 
         useEffect(() => {
           let maxIdx = 3;
@@ -221,32 +209,8 @@
 
         const addShippingRow = () => { if (shippingRowCount < 10) setShippingRowCount(prev => prev + 1); };
 
-        // レンタルID分割管理用
-        const rentalIds = useMemo(() => {
-           const parts = (header.rentalId || "").split('-');
-           return [parts[0]||"", parts[1]||"", parts[2]||""];
-        }, [header.rentalId]);
-        const updateRentalId = (idx, val) => {
-           const newParts = [...rentalIds];
-           newParts[idx] = val;
-           updateHeader('rentalId', newParts.join('-'));
-        };
-
-        const calculateMonths = (start, end) => {
-          if(!start || !end) return 0;
-          try {
-            const d1 = new Date(start);
-            const d2 = new Date(end);
-            if(isNaN(d1.getTime()) || isNaN(d2.getTime())) return 0;
-            const diffTime = Math.abs(d2 - d1);
-            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)); 
-            return Math.round(diffDays / 30) || 0;
-          } catch(e) { return 0; }
-        };
-        const periodMonths = useMemo(() => calculateMonths(header.periodStartDate, header.periodEndDate), [header.periodStartDate, header.periodEndDate]);
-
         const updateData = (updates) => {
-          if (isLocked) return; // ロック中は更新不可
+          if (isLocked) return; 
           onChange({ ...data, ...updates });
         };
         const updateHeader = (key, val) => updateData({ header: { ...header, [key]: val } });
@@ -254,19 +218,19 @@
         const updatePaymentDetail = (val) => updateData({ paymentConditionDetail: val });
 
         const updateItem = (idx, key, val) => {
-          if (isLocked) return;
+          const row = items[idx];
+          const isManual = String(row.id).includes('-'); // UUID判定
+          const canEditThisField = isManual ? !isSubmitted : !isLocked;
+          if (!canEditThisField) return;
+
           const newItems = [...items];
           newItems[idx] = { ...newItems[idx], [key]: val };
           
           if (['quantity', 'unitPrice'].includes(key)) {
-             const qty = Number(newItems[idx].quantity) || 0;
-             const price = Number(newItems[idx].unitPrice) || 0;
-             newItems[idx].amount = qty * price;
+             newItems[idx].amount = (Number(newItems[idx].quantity) || 0) * (Number(newItems[idx].unitPrice) || 0);
           }
           if (['quantity', 'costPrice'].includes(key)) {
-             const qty = Number(newItems[idx].quantity) || 0;
-             const cPrice = Number(newItems[idx].costPrice) || 0;
-             newItems[idx].costAmount = qty * cPrice;
+             newItems[idx].costAmount = (Number(newItems[idx].quantity) || 0) * (Number(newItems[idx].costPrice) || 0);
           }
           recalcTotals(newItems, schedule);
         };
@@ -291,81 +255,12 @@
           newSched[idx] = { ...newSched[idx], [key]: val };
           onChange({ ...data, schedule: newSched });
         };
-        const addScheduleRow = () => {
-          if (isLocked) return;
-          const lastRow = schedule[schedule.length - 1];
-          const defaultCount = (lastRow && lastRow.count === '延長') ? '1回目' : '';
-          const newSched = [...schedule, { id: generateId(), count: defaultCount, billingDate: '', amount: '', costReference: '', slipNo: '', closingDate: '', note: '', checkStatus: '', rowOrderNo: '' }];
-          onChange({ ...data, schedule: newSched });
-        };
-        const addExtensionRow = () => {
-          if (isLocked) return;
-          const newSched = [...schedule, { id: generateId(), count: '延長', billingDate: '', amount: '', costReference: '', slipNo: '', closingDate: '', note: '', checkStatus: '', rowOrderNo: '' }];
-          onChange({ ...data, schedule: newSched });
-        };
-        const removeScheduleRow = (idx) => {
-          if (isLocked) return;
-          const newSched = [...schedule];
-          newSched.splice(idx, 1);
-          onChange({ ...data, schedule: newSched });
-        };
         
         const updateRemark = (idx, key, val) => {
           if (isLocked) return;
           const newRemarks = [...remarks];
           newRemarks[idx] = { ...newRemarks[idx], [key]: val };
           onChange({ ...data, remarks: newRemarks });
-        };
-        const addRemark = () => {
-          if (isLocked) return;
-          onChange({ ...data, remarks: [...remarks, { 
-            id: generateId(), category: 'その他', content: '', date: new Date().toISOString().split('T')[0].replace(/-/g, '/'), status: '', mailSent: '' 
-          }]});
-        };
-        const deleteRemark = (idx) => {
-          if (isLocked) return;
-          const newRemarks = [...remarks];
-          newRemarks.splice(idx, 1);
-          onChange({ ...data, remarks: newRemarks });
-        };
-        const markMailSent = (idx) => {
-          if (isLocked) return;
-          const now = new Date();
-          const timeStr = `${now.getFullYear()}/${now.getMonth()+1}/${now.getDate()} ${now.getHours()}:${now.getMinutes().toString().padStart(2,'0')}`;
-          updateRemark(idx, 'mailSent', "送信済: " + timeStr);
-        };
-
-        const handleAutoGenerateSchedule = () => {
-          if (isLocked) return;
-          if (!header.periodStartDate && !isIndefinite) { alert("期間（開始日）を入力してください。"); return; }
-          if (!isIndefinite && !header.periodEndDate) { alert("期間（終了日）を入力するか、「終了まで」にチェックを入れてください。"); return; }
-          if (schedule.length > 0 && !confirm("現在のスケジュールをクリアして自動生成しますか？")) return;
-          
-          const months = isIndefinite ? 1 : periodMonths;
-          if (months <= 0) { alert("期間が短すぎるか、日付が正しくありません。"); return; }
-          
-          const monthlyAmount = items.reduce((sum, item) => sum + (Number(item.unitPrice) || 0), 0);
-          const monthlyCost = items.reduce((sum, item) => sum + (Number(item.costPrice) || 0), 0);
-          
-          const newSchedule = [];
-          const startDate = new Date(header.periodStartDate);
-          
-          for (let i = 0; i < months; i++) {
-             const billDate = new Date(startDate);
-             billDate.setMonth(startDate.getMonth() + i);
-             const closeDate = new Date(billDate.getFullYear(), billDate.getMonth() + 1, 0);
-             const formatDate = (d) => `${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}`;
-             const formatClose = (d) => `${d.getMonth()+1}/末`;
-             
-             const isCommunication = mode === 'communication';
-             const amountVal = (!isCommunication || i === 0) ? (monthlyAmount > 0 ? monthlyAmount : '') : '';
-             const costVal = (!isCommunication || i === 0) ? (monthlyCost > 0 ? monthlyCost : '') : '';
-
-             newSchedule.push({
-               id: generateId(), count: (i + 1) + '回目', billingDate: formatDate(billDate), amount: amountVal, costReference: costVal, slipNo: '', closingDate: formatClose(closeDate), note: '', checkStatus: '', rowOrderNo: ''
-             });
-          }
-          onChange({ ...data, schedule: newSchedule });
         };
 
         const Stamp = ({ title, info, className }) => (
@@ -386,56 +281,15 @@
           </div>
         );
 
-        const modeLabel = mode === 'sales' ? '販売品' : (mode === 'rental' ? 'レンタル' : '通信費');
+        const modeLabel = mode === 'rental' ? 'レンタル' : (mode === 'communication' ? '通信費' : '販売品');
         const borderColor = mode === 'rental' ? 'border-green-600' : (mode === 'communication' ? 'border-purple-600' : 'border-blue-600');
         const titleColor = mode === 'rental' ? 'text-green-700' : (mode === 'communication' ? 'text-purple-700' : 'text-blue-700');
 
-        // ★2回目以降(レンタル月額)の計算: 送料を除く
-        const itemsTotal = items.reduce((sum, item) => {
-           if (mode === 'rental' && item.productName && item.productName.includes('送料')) return sum;
-           return sum + (Number(item.amount) || 0);
-        }, 0);
-        const monthlyTax = Math.floor(itemsTotal * 0.1);
-        const monthlyTotal = itemsTotal + monthlyTax;
-        
-        // 原価計（販売モード用）
-        const costTotal = items.reduce((sum, item) => sum + (Number(item.costAmount) || 0), 0);
-
-        // ★Grid Columns調整: 規格列削除
-        // 品名(1fr), 数量(50), 単位(50), 単価(80), 金額(80), 原価金額(80)
-        let gridColsClass = 'grid-cols-[30px_1fr_60px_50px_50px_80px_80px_80px_1fr]';
-        
+        // ★精密グリッド調整：取引年月日(85px)を一番左に配置
+        let gridColsClass = 'grid-cols-[30px_85px_1fr_60px_50px_50px_80px_80px_80px_1fr]';
         if (mode === 'sales') {
-            // salesモード: 規格列(100px)を削除して7列に
-            gridColsClass = 'grid-cols-[30px_1fr_50px_50px_80px_80px_80px]'; 
-        } else if (mode === 'rental' || mode === 'communication') {
-            gridColsClass = 'grid-cols-[30px_1fr_50px_50px_80px_80px_80px_1fr]';
+            gridColsClass = 'grid-cols-[30px_85px_1fr_50px_50px_80px_80px_80px]'; 
         }
-
-        const gridColsSchedule = 'grid-cols-[30px_3rem_4rem_7rem_6rem_4rem_6rem_1fr_3rem]';
-
-        // ★ステータス選択UI
-        const StatusSelector = ({ status, onChange }) => {
-            return (
-              <div className="flex items-center space-x-1 bg-gray-100 p-1 rounded border border-gray-300">
-                 <select value={status} onChange={(e) => onChange(e.target.value)} className={`bg-transparent text-xs font-bold outline-none cursor-pointer ${isLocked ? 'pointer-events-none text-gray-500' : ''}`} disabled={isLocked}>
-                    <option value="official">通常(本番)</option>
-                    <option value="temporary">【仮】(金額0)</option>
-                    <option value="replacement">【差替】</option>
-                    <option value="submitted">提出済(ロック)</option>
-                    <option value="merged" disabled>統合済</option>
-                 </select>
-                 {status === 'merged' && <span className="text-gray-500 text-[10px]">(アーカイブ)</span>}
-              </div>
-            );
-        };
-
-        const handleMergeSubmit = () => {
-            if (!header.mergeTargetOrderNo) { alert("統合先の受注Noを入力してください。"); return; }
-            if (!confirm(`このデータを「統合済」に変更し、\n統合先: ${header.mergeTargetOrderNo} として記録しますか？\n(一覧から見えなくなる場合があります)`)) return;
-            updateHeader('dataStatus', 'merged');
-            setShowMergeModal(false);
-        };
 
         return (
           <div className={`w-full max-w-[1100px] print-full ${!isActive ? 'hidden' : ''}`}>
@@ -446,133 +300,72 @@
                     <span className="text-xs text-gray-500">受注No: {header.orderNo}</span>
                   </div>
                   <div className="flex items-center space-x-2">
-                     <StatusSelector status={header.dataStatus} onChange={(val) => updateHeader('dataStatus', val)} />
-                     {header.dataStatus === 'temporary' && !isLocked && (
-                         <button onClick={() => setShowMergeModal(true)} disabled={isLocked} className={`text-xs bg-gray-100 hover:bg-gray-200 border border-gray-300 rounded px-2 py-1 text-gray-600 ml-2 ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}>本番統合(消込)</button>
-                     )}
-                     {/* 管理者のみロック解除ボタン表示 */}
-                     {isLocked && currentUser.role === 'admin' && (
-                       <button onClick={() => updateHeader('dataStatus', 'official')} className="ml-2 text-xs bg-red-100 text-red-600 border border-red-200 px-2 py-1 rounded hover:bg-red-200">
-                         <Lock className="w-3 h-3 inline mr-1"/>ロック解除
-                       </button>
-                     )}
+                     <select value={header.dataStatus} onChange={(e) => updateHeader('dataStatus', e.target.value)} className={`bg-gray-100 text-xs font-bold p-1 rounded border border-gray-300 outline-none cursor-pointer ${isLocked ? 'pointer-events-none text-gray-500' : ''}`} disabled={isLocked}>
+                        <option value="official">通常(本番)</option>
+                        <option value="temporary">【仮】(金額0)</option>
+                        <option value="replacement">【差替】</option>
+                        <option value="submitted">提出済(ロック)</option>
+                     </select>
                   </div>
                 </div>
                 <div className="flex items-center space-x-3">
                   <div className="text-sm font-medium mr-2 flex items-center w-32 justify-end">
                     {saveStatus === 'saving' && <span className="text-blue-600 flex items-center animate-pulse"><Loader className="w-4 h-4 mr-1 animate-spin" /> 保存中...</span>}
                     {saveStatus === 'saved' && <span className="text-green-600 flex items-center fade-out"><CloudCheck className="w-4 h-4 mr-1" /> 保存完了</span>}
-                    {saveStatus === 'error' && <span className="text-red-600">保存エラー</span>}
                   </div>
-                  <button onClick={() => onExportExcel(tabId)} className="flex items-center px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium text-sm shadow"><FileSpreadsheet className="w-4 h-4 mr-2" /> Excel出力</button>
+                  <button onClick={() => onExportExcel()} className="flex items-center px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 font-medium text-sm shadow"><FileSpreadsheet className="w-4 h-4 mr-2" /> Excel出力</button>
                   <button onClick={() => window.print()} className="flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 font-medium text-sm"><Printer className="w-4 h-4 mr-2" /> 印刷</button>
                   
-                  {/* ★提出済みなら保存・提出ボタンを隠してメッセージ表示 */}
                   {!isLocked ? (
                     <>
-                      <button onClick={() => onSave(tabId, 'temporary')} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow font-medium text-sm"><Save className="w-4 h-4 mr-2" /> 一時保存</button>
-                      <button onClick={() => onSave(tabId, 'submit')} className="flex items-center px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 shadow font-medium text-sm ml-2"><Send className="w-4 h-4 mr-2" /> 提出</button>
+                      <button onClick={() => onSave('temporary')} className="flex items-center px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow font-medium text-sm"><Save className="w-4 h-4 mr-2" /> 一時保存</button>
+                      <button onClick={() => onSave('submit')} className="flex items-center px-6 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 shadow font-medium text-sm ml-2"><Send className="w-4 h-4 mr-2" /> 提出</button>
                     </>
                   ) : (
-                    <div className="flex items-center gap-2">
-                       <div className="flex items-center px-3 py-2 bg-gray-100 border border-gray-300 rounded text-gray-500 font-bold text-sm shadow-inner cursor-not-allowed">
-                         <Lock className="w-4 h-4 mr-2" /> 提出後は変更できません。メール等で依頼してください
-                       </div>
+                    <div className="flex items-center px-3 py-2 bg-gray-100 border border-gray-300 rounded text-gray-500 font-bold text-sm shadow-inner cursor-not-allowed">
+                       <Lock className="w-4 h-4 mr-2" /> ロック中
                     </div>
                   )}
                 </div>
               </div>
 
-              {/* 統合モーダル */}
-              {showMergeModal && (
-                  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 print-hidden">
-                      <div className="bg-white p-6 rounded-lg shadow-xl w-96">
-                          <h3 className="font-bold text-lg mb-4 flex items-center"><AlertTriangle className="w-5 h-5 text-yellow-500 mr-2"/>データ統合（消込）</h3>
-                          <p className="text-sm text-gray-600 mb-4">この仮データを本番データに取り込み済みとしてマークします。<br/>統合先の正式な受注Noを入力してください。</p>
-                          <div className="mb-4">
-                              <label className="block text-xs font-bold text-gray-700 mb-1">統合先受注No</label>
-                              <input className="w-full border border-gray-300 rounded p-2" value={header.mergeTargetOrderNo || ''} onChange={e => updateHeader('mergeTargetOrderNo', e.target.value)} placeholder="例: 2400123" />
-                          </div>
-                          <div className="flex justify-end space-x-2">
-                              <button onClick={() => setShowMergeModal(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">キャンセル</button>
-                              <button onClick={handleMergeSubmit} className="px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded">実行</button>
-                          </div>
-                      </div>
-                  </div>
-              )}
-
+              {/* 帳票デザイン本体 */}
               <div className="bg-white p-10 shadow-2xl print-full print:p-0 text-sm leading-relaxed border border-gray-300 print:border-none relative min-h-[1300px]">
-                <div className="absolute top-6 right-6 text-xs text-gray-400">{safeText(header.formId)}</div>
+                <div className="absolute top-6 right-6 text-[10px] text-gray-400 font-mono">{safeText(header.formId)}</div>
+                
                 <div className="flex justify-between items-start mb-6">
                   <div className="flex-1 pt-2">
                     <div className="flex items-end space-x-4 mb-4">
                       <h1 className="text-3xl font-serif font-bold tracking-widest border-b-4 border-double border-black pb-1 inline-block">
                         {mode === 'rental' ? 'レンタル受注兼発送依頼書' : (mode === 'communication' ? '通信費 受注兼発送依頼書' : '受注兼発送依頼書')}
-                        {header.dataStatus === 'temporary' && <span className="text-red-600 ml-2">【仮】</span>}
-                        {header.dataStatus === 'replacement' && <span className="text-red-600 ml-2">【差替】</span>}
-                        {header.dataStatus === 'submitted' && <span className="text-blue-600 ml-2">【提出済】</span>}
+                        {isTemporary && <span className="text-red-600 ml-2">【仮】</span>}
+                        {isReplacement && <span className="text-red-600 ml-2">【差替】</span>}
+                        {isSubmitted && <span className="text-blue-600 ml-2">【提出済】</span>}
                       </h1>
-                      <div className="flex flex-col text-sm font-bold text-red-600 mb-1">
-                        {header.tag && <span>{safeText(header.tag)}</span>}
-                        {mode === 'communication' && <span>＜通信費＞</span>}
-                      </div>
                     </div>
                     
                     <div className="flex items-end flex-wrap gap-4 text-base mb-2">
                       <div className="flex items-center">
                         <span className="font-bold mr-2 text-sm">受注No.</span>
-                        <div className="flex flex-col">
-                          <input type="text" value={header.orderNo || ''} onChange={e => updateHeader('orderNo', e.target.value)} disabled={isLocked} className={`font-mono text-2xl font-bold border-b-2 border-black bg-transparent focus:outline-none w-48 ${isLocked ? 'input-locked' : ''}`} />
-                          {mode === 'rental' && header.previousOrderNo && <span className="text-xs text-gray-500 mt-0.5 font-mono">(元受注: {header.previousOrderNo})</span>}
-                        </div>
+                        <input type="text" value={header.orderNo || ''} onChange={e => updateHeader('orderNo', e.target.value)} disabled={isLocked} className={`font-mono text-2xl font-bold border-b-2 border-black bg-transparent focus:outline-none w-48 ${isLocked ? 'input-locked' : ''}`} />
                       </div>
-                      
-                      <div className="flex items-center self-end pb-1">
-                        <span className="font-bold mr-2 text-sm">見積書No.</span>
-                        <input type="text" value={header.estimateNo || ''} onChange={e => updateHeader('estimateNo', e.target.value)} disabled={isLocked} className={`font-mono border-b border-gray-300 w-32 bg-transparent focus:outline-none text-lg ${isLocked ? 'input-locked' : ''}`} />
-                      </div>
-
+                      <div className="flex items-center self-end pb-1"><span className="font-bold mr-2 text-sm">見積書No.</span><input type="text" value={header.estimateNo || ''} onChange={e => updateHeader('estimateNo', e.target.value)} disabled={isLocked} className={`font-mono border-b border-gray-300 w-32 bg-transparent focus:outline-none text-lg ${isLocked ? 'input-locked' : ''}`} /></div>
                       {mode === 'sales' && (
                         <>
-                          <div className="flex items-center self-end pb-1">
-                             <span className="font-bold mr-2 text-sm">売上日</span>
-                             <input type="text" value={header.salesDate || ''} onChange={e => updateHeader('salesDate', e.target.value)} disabled={isLocked} className={`font-mono border-b border-gray-300 w-24 text-center bg-transparent focus:outline-none ${isLocked ? 'input-locked' : ''}`} placeholder="yyyy/mm/dd" />
-                          </div>
-                          <div className="flex items-center self-end pb-1">
-                             <span className="font-bold mr-2 text-sm">伝票No</span>
-                             <input type="text" value={header.headerSlipNo || ''} onChange={e => updateHeader('headerSlipNo', e.target.value)} disabled={isLocked} className={`font-mono border-b border-gray-300 w-24 text-center bg-transparent focus:outline-none ${isLocked ? 'input-locked' : ''}`} />
-                          </div>
-                        </>
-                      )}
-
-                      {mode === 'rental' && (
-                        <>
-                          <div className="flex items-center self-end pb-1">
-                            <span className="font-bold mr-2 text-sm">レンタルID</span>
-                            <div className="flex items-center font-mono">
-                               <input type="text" value={rentalIds[0]} onChange={e => updateRentalId(0, e.target.value)} disabled={isLocked} className={`border-b border-gray-300 w-12 text-center bg-transparent focus:outline-none ${isLocked ? 'input-locked' : ''}`} maxLength="4" placeholder="0000" />
-                               <span className="mx-1">-</span>
-                               <input type="text" value={rentalIds[1]} onChange={e => updateRentalId(1, e.target.value)} disabled={isLocked} className={`border-b border-gray-300 w-12 text-center bg-transparent focus:outline-none ${isLocked ? 'input-locked' : ''}`} maxLength="4" placeholder="0000" />
-                               <span className="mx-1">-</span>
-                               <input type="text" value={rentalIds[2]} onChange={e => updateRentalId(2, e.target.value)} disabled={isLocked} className={`border-b border-gray-300 w-12 text-center bg-transparent focus:outline-none ${isLocked ? 'input-locked' : ''}`} maxLength="4" placeholder="0000" />
-                            </div>
-                          </div>
-                          <div className="flex items-center self-end pb-1 w-full max-w-md mt-1">
-                             <span className="font-bold mr-2 text-sm whitespace-nowrap">現場名</span>
-                             <input type="text" value={header.siteName || ''} onChange={e => updateHeader('siteName', e.target.value)} disabled={isLocked} className={`font-bold border-b border-gray-300 w-full bg-transparent focus:outline-none ${isLocked ? 'input-locked' : ''}`} placeholder="(現場名を入力)" />
-                          </div>
+                          <div className="flex items-center self-end pb-1"><span className="font-bold mr-2 text-sm">売上日</span><input type="text" value={header.salesDate || ''} onChange={e => updateHeader('salesDate', e.target.value)} disabled={isLocked} className="font-mono border-b border-gray-300 w-24 text-center bg-transparent focus:outline-none" /></div>
+                          <div className="flex items-center self-end pb-1"><span className="font-bold mr-2 text-sm">伝票No</span><input type="text" value={header.headerSlipNo || ''} onChange={e => updateHeader('headerSlipNo', e.target.value)} disabled={isLocked} className="font-mono border-b border-gray-300 w-24 text-center bg-transparent focus:outline-none" /></div>
                         </>
                       )}
                     </div>
                   </div>
                   <div className="flex flex-col items-end">
                     <div className="flex items-end gap-3 mb-2">
-                       <Stamp title="担当" info={header.approvalStaff} className="border border-black shadow-sm" />
+                       {/* ★担当者は直送先担当者名を表示 */}
+                       <Stamp title="担当" info={{...header.approvalStaff, status: header.shipRep ? '済' : '', name: header.shipRep, date: header.date}} className="border border-black shadow-sm" />
                        <div className="flex flex-col items-end pb-1 text-gray-700">
                           <div className="flex items-center"><span className="mr-2 text-xs">作成日:</span><span className="font-mono border-b border-gray-300 min-w-[6rem] text-right text-sm">{safeText(header.date)}</span></div>
                        </div>
                     </div>
-                    
                     <div className="flex border border-black shadow-sm">
                       <Stamp title="作成" info={header.approvalCreator} /><Stamp title="確認" info={header.approvalCheck} /><div className="w-1 border-l border-black bg-gray-200"></div><Stamp title="部長" info={header.approvalManager} /><Stamp title="社長" info={header.approvalPresident} />
                     </div>
@@ -582,37 +375,47 @@
                 <div className="grid grid-cols-12 border-2 border-black mb-4">
                   <div className="col-span-6 border-r border-black flex flex-col">
                     <div className="border-b border-black p-3">
-                      <div className="flex justify-between items-start mb-1">
-                        <div className="text-xs bg-label px-3 py-0.5 rounded font-bold border border-gray-300">社名</div>
-                      </div>
+                      <div className="text-xs bg-label px-3 py-0.5 rounded font-bold border border-gray-300 w-max mb-1">社名</div>
                       <div className="px-2">
                         <input className={`font-bold text-xl leading-tight w-full outline-none bg-transparent ${isLocked ? 'input-locked' : ''}`} value={header.customerName || ''} onChange={e => updateHeader('customerName', e.target.value)} disabled={isLocked} placeholder="得意先名" />
-                        <div className="flex gap-4 text-sm mt-1 text-gray-700">
-                          <input className={`bg-transparent outline-none border-b border-transparent hover:border-gray-300 focus:border-gray-400 w-1/2 ${isLocked ? 'input-locked' : ''}`} value={header.customerBranch || ''} onChange={e => updateHeader('customerBranch', e.target.value)} disabled={isLocked} placeholder="支店名" />
-                        </div>
                       </div>
                     </div>
-                    <div className="border-b border-black p-3 flex-1 relative">
+                    <div className="border-b border-black p-3 flex-1">
                       <div className="text-xs bg-label px-3 py-0.5 rounded font-bold border border-gray-300 w-max mb-2">住所</div>
-                      <div className="px-2">
-                        <div className="flex items-center text-sm mb-1">〒<input className={`ml-1 bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} value={header.customerZipCode || ''} onChange={e => updateHeader('customerZipCode', e.target.value)} disabled={isLocked} placeholder="000-0000" /></div>
+                      <div className="px-2 text-sm">
+                        <div className="flex items-center mb-1">〒<input className="ml-1 bg-transparent outline-none" value={header.customerZipCode || ''} onChange={e => updateHeader('customerZipCode', e.target.value)} disabled={isLocked} placeholder="000-0000" /></div>
                         <textarea className={`text-base mb-2 w-full bg-transparent outline-none resize-none overflow-hidden ${isLocked ? 'input-locked' : ''}`} rows="2" value={header.customerAddress || ''} onChange={e => updateHeader('customerAddress', e.target.value)} disabled={isLocked} placeholder="住所" />
-                        <div className="flex flex-wrap items-center gap-4 text-sm mt-3">
-                           <div className="flex items-center"><span className="font-bold mr-2 text-gray-600 text-xs">TEL:</span><input className={`bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} value={header.customerTel || ''} onChange={e => updateHeader('customerTel', e.target.value)} disabled={isLocked} /></div>
-                           <div className="flex items-center"><span className="font-bold mr-2 text-gray-600 text-xs">FAX:</span><input className={`bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} value={header.customerFax || ''} onChange={e => updateHeader('customerFax', e.target.value)} disabled={isLocked} /></div>
+                        <div className="flex gap-4 text-xs font-bold text-gray-600 mt-2">
+                           <span>TEL: <input className="bg-transparent outline-none font-normal" value={header.customerTel || ''} onChange={e => updateHeader('customerTel', e.target.value)} disabled={isLocked} /></span>
+                           <span>FAX: <input className="bg-transparent outline-none font-normal" value={header.customerFax || ''} onChange={e => updateHeader('customerFax', e.target.value)} disabled={isLocked} /></span>
                         </div>
                       </div>
                       <div className="mt-2 border-t border-gray-300 pt-1 px-2">
-                          <div className="text-[10px] font-bold text-gray-500 mb-0.5">得意先備考</div>
-                          <textarea className={`w-full bg-transparent outline-none resize-none text-sm text-red-600 font-bold bg-red-50 ${isLocked ? 'input-locked' : ''}`} rows="2" 
-                              value={header.customerNote || ''} 
-                              onChange={e => updateHeader('customerNote', e.target.value)} 
-                              disabled={isLocked}
-                              placeholder="" />
+                          <div className="flex justify-between items-center mb-0.5">
+                            <div className="text-[10px] font-bold text-gray-500">得意先備考</div>
+                            {/* ★権限による注意書きの追加 */}
+                            <div className="text-[9px] font-bold text-red-500">※営業事務用（マスタ連動）</div>
+                          </div>
+                          {/* ★管理者以外は編集ロック */}
+                          <textarea 
+                            className={`w-full bg-transparent outline-none resize-none text-sm text-red-600 font-bold bg-red-50 ${!isAdmin ? 'cursor-not-allowed opacity-70' : ''}`} 
+                            rows="2" 
+                            value={header.customerNote || ''} 
+                            onChange={e => updateHeader('customerNote', e.target.value)} 
+                            disabled={isLocked || !isAdmin} 
+                          />
                       </div>
                     </div>
-                    <div className="p-3 flex justify-between items-center bg-gray-50 h-16">
-                       <div className="flex items-center gap-2 w-full"><span className="text-xs bg-label px-2 py-1 rounded font-bold border border-gray-300 whitespace-nowrap">営業担当</span><input className={`font-bold border-b border-gray-300 px-2 w-full text-base bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} value={header.salesRepInternalMain || ''} onChange={e => updateHeader('salesRepInternalMain', e.target.value)} disabled={isLocked} /></div>
+                    {/* ★営業担当の左側に先方担当を追加 */}
+                    <div className="p-3 bg-gray-50 h-16 flex items-center gap-2">
+                       <div className="flex items-center gap-1 flex-1">
+                         <span className="text-[10px] bg-label px-1 py-1 rounded font-bold border border-gray-300 whitespace-nowrap">先方担当</span>
+                         <input className="font-bold border-b border-gray-300 px-1 w-full text-sm bg-transparent outline-none" value={header.salesRepClient || ''} onChange={e => updateHeader('salesRepClient', e.target.value)} disabled={isLocked} />
+                       </div>
+                       <div className="flex items-center gap-1 flex-1">
+                         <span className="text-[10px] bg-label px-1 py-1 rounded font-bold border border-gray-300 whitespace-nowrap">営業担当</span>
+                         <input className="font-bold border-b border-gray-300 px-1 w-full text-sm bg-transparent outline-none" value={header.salesRepInternalMain || ''} onChange={e => updateHeader('salesRepInternalMain', e.target.value)} disabled={isLocked} />
+                       </div>
                     </div>
                   </div>
                   
@@ -622,532 +425,242 @@
                           <div className="text-xs bg-label px-3 py-0.5 rounded font-bold border border-gray-300 w-max">直送先</div>
                           <div className="flex items-center gap-2 w-1/2">
                              <span className="text-xs font-bold text-gray-500 whitespace-nowrap">担当者:</span>
-                             <input className={`font-bold border-b border-gray-300 px-1 w-full text-sm bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} value={header.shipRep || header.salesRepClient || ''} onChange={e => { updateHeader('shipRep', e.target.value); updateHeader('salesRepClient', e.target.value); }} disabled={isLocked} placeholder="先方担当者名" />
+                             <input className="font-bold border-b border-gray-300 px-1 w-full text-sm bg-transparent outline-none" value={header.shipRep || ''} onChange={e => updateHeader('shipRep', e.target.value)} disabled={isLocked} placeholder="直送先担当者名" />
                           </div>
                        </div>
                        <div className="px-2 text-sm space-y-1">
-                          <input className={`font-bold text-base border-b border-dashed border-gray-300 pb-1 mb-1 w-full bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} value={header.shipName || ''} onChange={e => updateHeader('shipName', e.target.value)} disabled={isLocked} placeholder="(直送先名)" />
-                          <textarea className={`w-full bg-transparent outline-none resize-none ${isLocked ? 'input-locked' : ''}`} rows="2" value={header.shipAddress || ''} onChange={e => updateHeader('shipAddress', e.target.value)} disabled={isLocked} placeholder="住所" />
-                          <div className="text-gray-600 mt-1 flex items-center">TEL: <input className={`ml-2 bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} value={header.shipTel || ''} onChange={e => updateHeader('shipTel', e.target.value)} disabled={isLocked} /></div>
+                          <input className="font-bold text-base border-b border-dashed border-gray-300 pb-1 mb-1 w-full bg-transparent outline-none" value={header.shipName || ''} onChange={e => updateHeader('shipName', e.target.value)} disabled={isLocked} placeholder="(直送先名)" />
+                          <textarea className="w-full bg-transparent outline-none resize-none" rows="2" value={header.shipAddress || ''} onChange={e => updateHeader('shipAddress', e.target.value)} disabled={isLocked} placeholder="住所" />
                        </div>
                     </div>
-                    <div className="grid grid-cols-12 border-t border-black">
-                      {(mode === 'rental' || mode === 'communication') && (
-                        <>
-                          <div className="col-span-12 border-b border-black p-1 flex items-center bg-yellow-50">
-                            <div className="text-xs bg-label w-16 py-1 rounded font-bold border border-gray-300 text-center mr-2">期間</div>
-                            <div className="flex-1 text-sm flex justify-between items-center font-mono relative">
-                               <input type="text" value={header.periodStartDate || ''} onChange={e => updateHeader('periodStartDate', e.target.value)} disabled={isLocked} className={`bg-transparent border-b border-gray-300 w-28 text-center outline-none ${isLocked ? 'input-locked' : ''}`} placeholder="yyyy/mm/dd" />
-                               <span className="mx-2">～</span>
-                               <input type="text" value={header.periodEndDate || ''} onChange={e => updateHeader('periodEndDate', e.target.value)} disabled={isLocked} className={`bg-transparent border-b border-gray-300 w-28 text-center outline-none ${isLocked ? 'input-locked' : ''}`} placeholder="yyyy/mm/dd" />
-                               <label className="ml-4 flex items-center cursor-pointer text-xs font-bold text-gray-700 select-none"><input type="checkbox" className="mr-1" checked={isIndefinite} onChange={e => setIsIndefinite(e.target.checked)} disabled={isLocked} />終了まで</label>
-                               {!isIndefinite && <span className="ml-4 font-bold whitespace-nowrap">全 {periodMonths} ヶ月</span>}
-                               <button onClick={handleAutoGenerateSchedule} disabled={isLocked} className={`ml-auto bg-blue-600 text-white text-xs px-3 py-1 rounded hover:bg-blue-700 flex items-center print-hidden shadow-sm ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}><Calculator className="w-3 h-3 mr-1" /> スケジュール生成</button>
-                            </div>
-                          </div>
-                        </>
-                      )}
-                      <div className="col-span-12 p-3 pb-2 border-b border-black">
-                        <div className="text-xs bg-label px-3 py-0.5 rounded font-bold border border-gray-300 w-max mb-2">集金条件</div>
+                    <div className="p-3 pb-2 border-t border-black bg-yellow-50">
+                        <div className="text-xs bg-label px-3 py-0.5 rounded font-bold border border-gray-300 w-max mb-2">売上先の集金条件</div>
                         <div className="grid grid-cols-2 gap-4 px-2 mb-2">
                            <div className="flex items-center">
                              <span className="font-bold text-sm mr-2 w-16 text-right">締め日:</span>
-                             <select value={header.closingDate || ''} onChange={e => updateHeader('closingDate', e.target.value)} disabled={isLocked} className={`border-b border-gray-400 flex-1 text-center bg-transparent font-bold outline-none ${isLocked ? 'input-locked' : ''}`}><option value=""></option>{[...Array(12)].map((_, i) => (<option key={i + 1} value={i + 1}>{i + 1}</option>))}</select>
+                             <select value={header.closingDate || ''} onChange={e => updateHeader('closingDate', e.target.value)} disabled={isLocked} className="border-b border-gray-400 flex-1 text-center bg-transparent font-bold outline-none"><option value=""></option>{[...Array(12)].map((_, i) => (<option key={i + 1} value={i + 1}>{i + 1}</option>))}</select>
                            </div>
                            <div className="flex items-center">
                              <span className="font-bold text-sm mr-2 w-16 text-right">支払日:</span>
-                             <input value={header.paymentDate || ''} onChange={e => updateHeader('paymentDate', e.target.value)} disabled={isLocked} className={`border-b border-gray-400 flex-1 text-center bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} list="payment-dates" placeholder="(選択/入力)" />
+                             <input value={header.paymentDate || ''} onChange={e => updateHeader('paymentDate', e.target.value)} disabled={isLocked} className="border-b border-gray-400 flex-1 text-center bg-transparent outline-none" list="payment-dates" />
                            </div>
                         </div>
                         <div className="flex mt-2 px-2 items-start">
                           <span className="font-bold text-sm mr-2 mt-1 whitespace-nowrap">支払条件:</span>
                           <div className="flex-1 border border-black rounded bg-white">
                             <div className="border-b border-gray-300">
-                               <select className={`w-full bg-transparent px-2 py-1 text-sm font-bold outline-none ${isLocked ? 'input-locked' : ''}`} value={paymentConditionType} onChange={e => updatePaymentType(e.target.value)} disabled={isLocked}><option value="従来通り">従来通り</option><option value="従来通り以外">従来通り以外</option></select>
+                               <select className="w-full bg-transparent px-2 py-1 text-sm font-bold outline-none" value={paymentConditionType} onChange={e => updatePaymentType(e.target.value)} disabled={isLocked}><option value="従来通り">従来通り</option><option value="従来通り以外">従来通り以外</option></select>
                             </div>
-                            <div><input type="text" list="payment-details" className={`w-full bg-transparent px-2 py-1 text-sm outline-none placeholder-gray-400 ${isLocked ? 'input-locked' : ''}`} placeholder="(詳細を入力)" value={paymentConditionDetail} onChange={e => updatePaymentDetail(e.target.value)} disabled={isLocked} /></div>
+                            <div><input type="text" list="payment-details" className="w-full bg-transparent px-2 py-1 text-sm outline-none" placeholder="(詳細を入力)" value={paymentConditionDetail} onChange={e => updatePaymentDetail(e.target.value)} disabled={isLocked} /></div>
                           </div>
                         </div>
-                      </div>
-                      
-                      <div className="col-span-12 border-b border-black bg-white p-2">
-                           <div className={`grid gap-x-2 text-center text-xs font-bold text-gray-600 mb-1 ${mode === 'rental' ? 'grid-cols-[20px_1fr_1fr_1fr_1fr_0.7fr]' : 'grid-cols-[20px_1fr_1fr_1fr_1fr_0.7fr_0.7fr]'}`}>
-                             <div></div>
-                             <div className="bg-gray-100 rounded py-0.5">出荷日</div>
-                             <div className="bg-gray-100 rounded py-0.5">納期</div>
-                             <div className="bg-gray-100 rounded py-0.5">配送方法</div>
-                             <div className="bg-gray-100 rounded py-0.5">時間帯</div>
-                             {mode !== 'rental' && <div className="bg-gray-100 rounded py-0.5">情報No</div>}
-                             <div className="bg-gray-100 rounded py-0.5">出荷No</div>
-                           </div>
-                           {[...Array(shippingRowCount)].map((_, i) => {
-                             const num = i + 1;
-                             return (
-                                <div key={num} className={`grid gap-x-2 items-center mb-1 last:mb-0 ${mode === 'rental' ? 'grid-cols-[20px_1fr_1fr_1fr_1fr_0.7fr]' : 'grid-cols-[20px_1fr_1fr_1fr_1fr_0.7fr_0.7fr]'}`}>
-                                  <div className="text-center font-bold text-sm rounded-full bg-gray-100 w-5 h-5 flex items-center justify-center text-[10px]">{num}</div>
-                                  <div><input className={`w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm ${isLocked ? 'input-locked' : ''}`} value={header[`shipDate${num}`] || ''} onChange={e => updateHeader(`shipDate${num}`, e.target.value)} disabled={isLocked} placeholder="yyyy/mm/dd" /></div>
-                                  <div><input className={`w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm ${isLocked ? 'input-locked' : ''}`} value={header[`deliveryDate${num}`] || ''} onChange={e => updateHeader(`deliveryDate${num}`, e.target.value)} disabled={isLocked} placeholder="yyyy/mm/dd" /></div>
-                                  <div><input className={`w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm ${isLocked ? 'input-locked' : ''}`} value={header[`deliveryMethod${num}`] || ''} onChange={e => updateHeader(`deliveryMethod${num}`, e.target.value)} disabled={isLocked} placeholder="" /></div>
-                                  <div>
-                                    <select className={`w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm ${isLocked ? 'input-locked' : ''}`} value={header[`deliveryTime${num}`] || ''} onChange={e => updateHeader(`deliveryTime${num}`, e.target.value)} disabled={isLocked}>
-                                        <option value="">指定なし</option><option value="午前中">午前中</option><option value="14時～16時">14時～16時</option><option value="16時～18時">16時～18時</option><option value="18時以降">18時以降</option>
-                                    </select>
-                                  </div>
-                                  {mode !== 'rental' && <div><input className={`w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm ${isLocked ? 'input-locked' : ''}`} value={header[`informationNo${num}`] || ''} onChange={e => updateHeader(`informationNo${num}`, e.target.value)} disabled={isLocked} /></div>}
-                                  <div><input className={`w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm ${isLocked ? 'input-locked' : ''}`} value={header[`shippingNo${num}`] || ''} onChange={e => updateHeader(`shippingNo${num}`, e.target.value)} disabled={isLocked} /></div>
-                                </div>
-                             );
-                           })}
-                           <div className="text-center mt-1 print-hidden">
-                             <button onClick={addShippingRow} disabled={isLocked} className={`text-blue-500 text-xs hover:bg-blue-50 rounded px-4 py-0.5 border border-transparent hover:border-blue-200 ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}><Plus className="w-3 h-3 inline mr-1" />追加</button>
-                           </div>
-                      </div>
                     </div>
-                    {mode !== 'communication' && mode !== 'rental' && (
-                      <div className="h-20 flex">
-                         <div className="text-xs bg-label px-2 py-4 rounded font-bold border border-gray-300 writing-vertical-lr text-center mr-2 h-full flex items-center justify-center m-1">技術課<br/>依頼書</div>
-                         <div className="flex-1 p-2 flex items-center"><input type="text" list="tech-requests" value={header.internalMemo || ''} onChange={e => updateHeader('internalMemo', e.target.value)} disabled={isLocked} className={`w-full text-sm bg-transparent border-b border-gray-300 p-1 focus:border-blue-500 outline-none transition-colors ${isLocked ? 'input-locked' : ''}`} placeholder="(選択または入力)"/></div>
-                      </div>
-                    )}
+                  </div>
+                </div>
+
+                <div className="border-2 border-black mb-4">
+                  <div className="bg-white p-2">
+                    <div className={`grid gap-x-2 text-center text-xs font-bold text-gray-600 mb-1 ${mode === 'rental' ? 'grid-cols-[20px_1fr_1fr_1fr_1fr_0.7fr]' : 'grid-cols-[20px_1fr_1fr_1fr_1fr_0.7fr_0.7fr]'}`}>
+                      <div></div><div className="bg-gray-100 rounded py-0.5 border border-gray-200">出荷日</div><div className="bg-gray-100 rounded py-0.5 border border-gray-200">納期</div><div className="bg-gray-100 rounded py-0.5 border border-gray-200">配送方法</div><div className="bg-gray-100 rounded py-0.5 border border-gray-200">時間帯</div>{mode !== 'rental' && <div className="bg-gray-100 rounded py-0.5 border border-gray-200">情報No</div>}<div className="bg-gray-100 rounded py-0.5 border border-gray-200">出荷No</div>
+                    </div>
+                    {[...Array(shippingRowCount)].map((_, i) => {
+                      const num = i + 1;
+                      return (
+                        <div key={num} className={`grid gap-x-2 items-center mb-1 last:mb-0 ${mode === 'rental' ? 'grid-cols-[20px_1fr_1fr_1fr_1fr_0.7fr]' : 'grid-cols-[20px_1fr_1fr_1fr_1fr_0.7fr_0.7fr]'}`}>
+                          <div className="text-center font-bold text-[10px] rounded-full bg-gray-100 w-5 h-5 flex items-center justify-center border border-gray-200">{num}</div>
+                          <div><input className="w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm" value={header[`shipDate${num}`] || ''} onChange={e => updateHeader(`shipDate${num}`, e.target.value)} disabled={isLocked} placeholder="yyyy/mm/dd" /></div>
+                          <div><input className="w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm" value={header[`deliveryDate${num}`] || ''} onChange={e => updateHeader(`deliveryDate${num}`, e.target.value)} disabled={isLocked} placeholder="yyyy/mm/dd" /></div>
+                          <div><input list="shipping-methods" className="w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm" value={header[`deliveryMethod${num}`] || ''} onChange={e => updateHeader(`deliveryMethod${num}`, e.target.value)} disabled={isLocked} /></div>
+                          <div>
+                            <select className="w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-xs" value={header[`deliveryTime${num}`] || ''} onChange={e => updateHeader(`deliveryTime${num}`, e.target.value)} disabled={isLocked}>
+                                <option value="">指定なし</option><option value="午前中">午前中</option><option value="14時～16時">14時～16時</option><option value="16時～18時">16時～18時</option><option value="18時以降">18時以降</option>
+                            </select>
+                          </div>
+                          {mode !== 'rental' && <div><input className="w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm" value={header[`informationNo${num}`] || ''} onChange={e => updateHeader(`informationNo${num}`, e.target.value)} disabled={isLocked} /></div>}
+                          <div><input className="w-full text-center bg-transparent border-b border-gray-300 focus:border-blue-500 outline-none text-sm font-mono" value={header[`shippingNo${num}`] || ''} onChange={e => updateHeader(`shippingNo${num}`, e.target.value)} disabled={isLocked} /></div>
+                        </div>
+                      );
+                    })}
+                    <div className="text-center mt-1 print-hidden"><button onClick={addShippingRow} disabled={isLocked} className="text-blue-500 text-xs hover:underline"><Plus className="w-3 h-3 inline mr-1" />行を追加</button></div>
+                  </div>
+                  <div className="h-16 flex border-t border-black">
+                      <div className="text-xs bg-label px-2 py-2 rounded-sm font-bold border-r border-black writing-vertical-lr text-center flex items-center justify-center m-0.5">技術課<br/>依頼書</div>
+                      <div className="flex-1 p-2 flex items-center"><input type="text" list="tech-requests" value={header.internalMemo || ''} onChange={e => updateHeader('internalMemo', e.target.value)} disabled={isLocked} className="w-full text-sm bg-transparent border-b border-gray-300 p-1 focus:border-blue-500 outline-none transition-colors" placeholder="(選択または入力)"/></div>
                   </div>
                 </div>
 
                 <div className="border-2 border-black mb-6">
                   <div className={`grid ${gridColsClass} bg-label border-b border-black text-center font-bold py-2 text-sm`}>
                     <div className="text-[10px] text-gray-500">操作</div>
-                    
-                    <div className="border-l border-black border-r">品 名</div>
-                    {(mode !== 'rental' && mode !== 'communication' && mode !== 'sales') && <div className="border-r border-black">規格</div>}
+                    <div className="border-l border-black border-r px-1 text-[10px] flex items-center justify-center">取引年月日</div>
+                    <div className="border-r border-black px-1">品 名</div>
+                    {mode !== 'sales' && <div className="border-r border-black">規格</div>}
                     <div className="border-r border-black">数量</div><div className="border-r border-black">単位</div><div className="border-r border-black">単価</div><div className="border-r border-black">金額</div>
                     <div className="border-r border-black">原価金額</div>
-                    {(mode !== 'sales') && <div className="border-r border-black">備考</div>}
+                    {mode !== 'sales' && <div>備考</div>}
                   </div>
-                  {items.map((row, i) => (
-                    <div key={row.id} className={`relative grid ${gridColsClass} border-b border-black last:border-none text-sm min-h-[32px] group`}>
-                      <div className="flex items-center justify-center relative"><div className={`opacity-0 group-hover:opacity-100 flex items-center space-x-1 print-hidden ${isLocked ? 'hidden' : ''}`}><button onClick={() => deleteItem(i)} className="text-gray-300 hover:text-red-500"><Trash2 className="w-4 h-4" /></button></div></div>
-                      
-                      <div className="border-l border-black border-r p-1 pl-3 flex flex-col justify-center">
-                          <input className={`w-full bg-transparent outline-none font-medium ${isLocked ? 'input-locked' : ''}`} value={row.productName || ''} onChange={e => updateItem(i, 'productName', e.target.value)} disabled={isLocked} />
-                          {row.shippedDate && <span className="text-[9px] text-green-600 font-bold block leading-none print-hidden">出荷日: {row.shippedDate}</span>}
+                  {items.map((row, i) => {
+                    const isManual = String(row.id).includes('-');
+                    const canEditRow = isManual ? !isSubmitted : !isLocked;
+                    return (
+                      <div key={row.id} className={`grid ${gridColsClass} border-b border-black last:border-none text-sm min-h-[32px] group`}>
+                        <div className="flex items-center justify-center"><button onClick={() => deleteItem(i)} className={`opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 print-hidden ${isLocked ? 'hidden' : ''}`}><Trash2 className="w-4 h-4" /></button></div>
+                        <div className="border-l border-black border-r p-1"><input className={`w-full text-center bg-transparent outline-none text-xs font-mono ${!canEditRow ? 'text-gray-400' : ''}`} value={row.transactionDate || ''} onChange={e => updateItem(i, 'transactionDate', e.target.value)} placeholder="MM/DD" readOnly={!canEditRow} /></div>
+                        <div className="border-r border-black p-1 pl-3 flex flex-col justify-center"><input className={`w-full bg-transparent outline-none font-medium ${!canEditRow ? 'text-gray-500' : ''}`} value={row.productName || ''} onChange={e => updateItem(i, 'productName', e.target.value)} readOnly={!canEditRow} /></div>
+                        {mode !== 'sales' && <div className="border-r border-black p-1"><input className="w-full text-center bg-transparent outline-none text-xs" value={row.spec || ''} onChange={e => updateItem(i, 'spec', e.target.value)} readOnly={!canEditRow} /></div>}
+                        <div className="border-r border-black p-1"><NumberInput className="w-full bg-transparent outline-none font-mono" value={row.quantity || ''} onChange={v => updateItem(i, 'quantity', v)} readOnly={!canEditRow} /></div>
+                        <div className="border-r border-black p-1"><input className="w-full text-center bg-transparent outline-none" value={row.unit || ''} onChange={e => updateItem(i, 'unit', e.target.value)} readOnly={!canEditRow} /></div>
+                        <div className="border-r border-black p-1"><NumberInput className="w-full bg-transparent outline-none font-mono" value={row.unitPrice || ''} onChange={v => updateItem(i, 'unitPrice', v)} readOnly={!canEditRow} isMasked={isTemporary} /></div>
+                        <div className="border-r border-black p-1 px-2 text-right font-mono font-bold flex items-center justify-end">{isTemporary ? '0' : (row.amount ? Number(row.amount).toLocaleString() : '')}</div>
+                        <div className="border-r border-black p-1"><NumberInput className="w-full bg-transparent outline-none font-mono text-xs text-gray-500" value={row.costAmount || ''} onChange={v => updateItem(i, 'costAmount', v)} placeholder="-" readOnly={!canEditRow} /></div>
+                        {mode !== 'sales' && <div className="p-1 border-r border-black flex items-center"><input className="w-full bg-transparent outline-none text-xs" value={row.note || ''} onChange={e => updateItem(i, 'note', e.target.value)} readOnly={!canEditRow} /></div>}
                       </div>
-                      
-                      {(mode !== 'rental' && mode !== 'communication' && mode !== 'sales') && <div className="border-r border-black p-1"><input className={`w-full bg-transparent outline-none text-center ${isLocked ? 'input-locked' : ''}`} value={row.spec || ''} onChange={e => updateItem(i, 'spec', e.target.value)} disabled={isLocked} /></div>}
-                      
-                      <div className="border-r border-black p-1"><NumberInput className="w-full bg-transparent outline-none font-mono" value={row.quantity || ''} onChange={e => updateItem(i, 'quantity', e.target.value)} readOnly={isLocked} /></div>
-                      <div className="border-r border-black p-1"><input className={`w-full text-center bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} value={row.unit || ''} onChange={e => updateItem(i, 'unit', e.target.value)} disabled={isLocked} /></div>
-                      <div className="border-r border-black p-1"><NumberInput className="w-full bg-transparent outline-none font-mono" value={row.unitPrice || ''} onChange={e => updateItem(i, 'unitPrice', e.target.value)} isMasked={isTemporary} readOnly={isLocked} /></div>
-                      <div className={`border-r border-black p-1 px-2 text-right font-mono font-bold`}>{isTemporary ? '0' : (row.amount ? Number(row.amount).toLocaleString() : '')}</div>
-                      
-                      <div className="border-r border-black p-1"><NumberInput className="w-full bg-transparent outline-none font-mono text-xs" value={row.costAmount || ''} onChange={e => updateItem(i, 'costAmount', e.target.value)} placeholder="-" isMasked={isTemporary} readOnly={isLocked} /></div>
-
-                      {(mode !== 'sales') && <div className="p-1 border-r border-black"><input className={`w-full bg-transparent outline-none ${isLocked ? 'input-locked' : ''}`} value={row.note || ''} onChange={e => updateItem(i, 'note', e.target.value)} disabled={isLocked} /></div>}
-                    </div>
-                  ))}
+                    );
+                  })}
                   {[...Array(Math.max(0, 5 - items.length))].map((_, i) => (
-                      <div key={`empty-${i}`} className={`grid ${gridColsClass} border-b border-black last:border-none text-sm min-h-[32px]`}>
-                        <div></div>
-                        <div className="border-l border-black border-r"></div>
-                        {(mode !== 'rental' && mode !== 'communication' && mode !== 'sales') && <div className="border-r border-black"></div>}
-                        <div className="border-r border-black"></div><div className="border-r border-black"></div><div className="border-r border-black"></div><div className="border-r border-black"></div>
-                        <div className="border-r border-black"></div>
-                        {(mode !== 'sales') && <div className="border-r border-black"></div>}
-                        <div></div>
-                      </div>
+                      <div key={`empty-${i}`} className={`grid ${gridColsClass} border-b border-black last:border-none text-sm min-h-[32px]`}><div/><div className="border-l border-black border-r"/><div className="border-r border-black"/><div className="border-r border-black"/><div className="border-r border-black"/><div className="border-r border-black"/><div className="border-r border-black font-mono"/><div className="border-r border-black"/><div/></div>
                   ))}
                   
-                  <div className="border-t border-black border-b border-black text-sm">
-                    {mode === 'sales' ? (
-                      <div className="bg-gray-50 p-2 flex flex-col items-end pr-4">
-                        <div className="flex space-x-6 items-center">
-                          <div className="flex items-center"><span className="text-xs font-bold mr-2">小計</span><span className="font-mono text-base">{isTemporary ? '0' : totals.subtotal.toLocaleString()}</span></div>
-                          <div className="flex items-center"><span className="text-xs font-bold mr-2">消費税</span><span className="font-mono text-base">{isTemporary ? '0' : totals.tax.toLocaleString()}</span></div>
-                          <div className="flex items-center"><span className="text-sm font-bold mr-2">合計</span><span className="font-mono text-xl font-bold">{isTemporary ? '0' : totals.total.toLocaleString()} 円</span></div>
-                        </div>
-                        <div className="flex items-center mt-1 pt-1 border-t border-gray-300 w-48 justify-end">
-                            <span className="text-xs text-gray-500 mr-2">原価計</span><span className="font-mono text-sm">{isTemporary ? '0' : costTotal.toLocaleString()} 円</span>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="bg-yellow-50">
-                          <div className="p-2 flex justify-end items-center space-x-6 pr-4 border-b border-gray-300">
-                              <span className="font-bold text-gray-700 mr-auto pl-2">【初回ご請求】</span>
-                              <div className="flex items-center"><span className="text-xs text-gray-500 mr-2">小計</span><span className="font-mono">{isTemporary ? '0' : totals.subtotal.toLocaleString()}</span></div>
-                              <div className="flex items-center"><span className="text-xs text-gray-500 mr-2">消費税</span><span className="font-mono">{isTemporary ? '0' : totals.tax.toLocaleString()}</span></div>
-                              <div className="flex items-center"><span className="text-xs font-bold mr-2">合計</span><span className="font-mono text-lg font-bold">{isTemporary ? '0' : totals.total.toLocaleString()} 円</span></div>
-                          </div>
-                          <div className="p-2 flex justify-end items-center space-x-6 pr-4">
-                              <span className="font-bold text-gray-700 mr-auto pl-2">【2回目以降 (月額)】 <span className="text-[10px] font-normal text-gray-500">※送料除く</span></span>
-                              <div className="flex items-center"><span className="text-xs text-gray-500 mr-2">小計</span><span className="font-mono">{isTemporary ? '0' : itemsTotal.toLocaleString()}</span></div>
-                              <div className="flex items-center"><span className="text-xs text-gray-500 mr-2">消費税</span><span className="font-mono">{isTemporary ? '0' : monthlyTax.toLocaleString()}</span></div>
-                              <div className="flex items-center"><span className="text-xs font-bold mr-2">合計</span><span className="font-mono text-lg font-bold">{isTemporary ? '0' : monthlyTotal.toLocaleString()} 円</span></div>
-                          </div>
+                  <div className="border-t border-black p-2 flex flex-col items-end pr-8 bg-gray-50">
+                    <div className="flex space-x-6 items-center">
+                      <div className="flex items-center"><span className="text-xs font-bold mr-2">小計</span><span className="font-mono text-base">{isTemporary ? '0' : totals.subtotal.toLocaleString()}</span></div>
+                      <div className="flex items-center"><span className="text-xs font-bold mr-2">消費税</span><span className="font-mono text-base">{isTemporary ? '0' : totals.tax.toLocaleString()}</span></div>
+                      <div className="flex items-center"><span className="text-sm font-bold mr-2">合計</span><span className="font-mono text-xl font-bold">{isTemporary ? '0' : totals.total.toLocaleString()} 円</span></div>
+                    </div>
+                    {mode === 'sales' && (
+                      <div className="mt-1 pt-1 border-t border-gray-300 w-48 flex justify-end items-center">
+                        <span className="text-[10px] font-bold text-gray-500 mr-2">原価計:</span><span className="font-mono text-xs">{isTemporary ? '0' : items.reduce((sum, item) => sum + (Number(item.costAmount) || 0), 0).toLocaleString()} 円</span>
                       </div>
                     )}
                   </div>
-
-                  <div className="p-1 border-t-0 bg-white print-hidden text-center mt-1">
-                      <button onClick={() => { const newItems = [...items, { id: generateId(), productName: '', quantity: '', unit: '', unitPrice: '', amount: 0 }]; onChange({...data, items: newItems}); }} disabled={isLocked} className={`text-blue-600 hover:text-blue-800 text-xs font-bold flex items-center justify-center w-full ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}><Plus className="w-3 h-3 mr-1" /> 明細を追加</button>
-                  </div>
+                  <div className="p-1 bg-white print-hidden text-center"><button onClick={() => { if(!isLocked) onChange({...data, items: [...items, { id: generateId(), productName: '', transactionDate: '', quantity: '', unit: '', unitPrice: '', amount: 0, costAmount: 0 }]})}} disabled={isLocked} className="text-blue-600 hover:text-blue-800 text-xs font-bold flex items-center justify-center w-full"><Plus className="w-3 h-3 mr-1" /> 明細を追加</button></div>
                 </div>
 
-                {mode !== 'sales' && (
-                  <div className="border-2 border-black mb-6 relative">
-                    <div className={`grid ${gridColsSchedule} bg-label border-b border-black text-center font-bold py-2 text-sm`}>
-                      <div className="text-[10px] text-gray-500">操作</div>
-                      <div className="border-l border-black border-r">回数</div><div className="border-r border-black">売上日</div><div className="border-r border-black">{mode === 'sales' ? '請求金額' : '原価'}</div><div className="border-r border-black">伝票No</div><div className="border-r border-black">締め日</div><div className="border-r border-black">受注No</div><div className="border-r border-black">備考</div><div>チェック</div>
-                    </div>
-                    {schedule.map((row, i) => {
-                      if (row.count === '延長') {
-                        return (
-                          <div key={row.id} className="grid grid-cols-[30px_3rem_1fr] border-b border-black last:border-none text-sm min-h-[32px] group bg-pink-100">
-                             <div className="flex items-center justify-center relative"><div className={`opacity-0 group-hover:opacity-100 flex items-center space-x-1 print-hidden ${isLocked ? 'hidden' : ''}`}><button onClick={() => removeScheduleRow(i)} className="text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button></div></div>
-                             <div className="border-l border-black border-r border-black p-1 text-center font-bold text-red-600 bg-pink-100">延長</div>
-                             <div className="p-1">
-                               <input className={`w-full bg-transparent outline-none font-bold text-red-800 ${isLocked ? 'input-locked' : ''}`} value={row.billingDate || ''} onChange={e => updateSchedule(i, 'billingDate', e.target.value)} disabled={isLocked} placeholder="(延長の詳細を入力: 例: 2025/10/01〜2026/03/31 6ヶ月)" />
-                             </div>
-                          </div>
-                        );
-                      }
-                      
-                      return (
-                        <div key={row.id} className={`grid ${gridColsSchedule} border-b border-black last:border-none text-sm min-h-[32px] group`}>
-                          <div className="flex items-center justify-center relative"><div className={`opacity-0 group-hover:opacity-100 flex items-center space-x-1 print-hidden ${isLocked ? 'hidden' : ''}`}><button onClick={() => removeScheduleRow(i)} className="text-gray-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button></div></div>
-                          <div className="border-l border-black border-r p-1 text-center font-bold"><input className={`w-full bg-transparent outline-none text-center ${isLocked ? 'input-locked' : ''}`} value={row.count || ''} onChange={e => updateSchedule(i, 'count', e.target.value)} disabled={isLocked} placeholder={`${i+1}回目`} /></div>
-                          <div className="border-r border-black p-1 text-center">
-                             <input className={`w-full bg-transparent outline-none text-center font-mono ${mode==='communication'?'text-gray-400':''} ${isLocked ? 'input-locked' : ''}`} value={row.billingDate || ''} onChange={e => updateSchedule(i, 'billingDate', e.target.value)} readOnly={mode==='communication' || isLocked} placeholder="MM/DD" />
-                          </div>
-                          <div className="border-r border-black p-1 text-right">
-                             <NumberInput className="w-full bg-transparent outline-none font-mono" value={mode === 'sales' ? (row.amount || '') : (row.costReference || '')} onChange={e => updateSchedule(i, mode === 'sales' ? 'amount' : 'costReference', e.target.value)} isMasked={isTemporary} readOnly={isLocked} />
-                          </div>
-                          <div className="border-r border-black p-1 text-center">
-                             <input className={`w-full bg-transparent outline-none text-center font-mono ${mode==='communication'?'text-gray-400':''} ${isLocked ? 'input-locked' : ''}`} value={row.slipNo || ''} onChange={e => updateSchedule(i, 'slipNo', e.target.value)} readOnly={mode==='communication' || isLocked} />
-                          </div>
-                          <div className="border-r border-black p-1 text-center">
-                             <input className={`w-full bg-transparent outline-none text-center font-mono text-xs ${mode==='communication'?'text-gray-400':''} ${isLocked ? 'input-locked' : ''}`} value={row.closingDate || ''} onChange={e => updateSchedule(i, 'closingDate', e.target.value)} readOnly={mode==='communication' || isLocked} />
-                          </div>
-                          <div className="border-r border-black p-1 text-center">
-                             <input className={`w-full bg-transparent outline-none text-center font-mono text-xs ${isLocked ? 'input-locked' : ''}`} value={row.rowOrderNo || ''} onChange={e => updateSchedule(i, 'rowOrderNo', e.target.value)} disabled={isLocked} />
-                          </div>
-                          <div className="border-r border-black p-1 flex items-center"><input className={`w-full bg-transparent outline-none text-xs ${isLocked ? 'input-locked' : ''}`} value={row.note || ''} onChange={e => updateSchedule(i, 'note', e.target.value)} disabled={isLocked} /></div>
-                          <div className="p-1 text-center"><input className={`w-full bg-transparent outline-none text-center text-xs ${isLocked ? 'input-locked' : ''}`} value={row.checkStatus || ''} onChange={e => updateSchedule(i, 'checkStatus', e.target.value)} disabled={isLocked} /></div>
+                {/* 備考 / 履歴 セクション */}
+                <div className="border border-black p-3 mb-4">
+                  <div className="text-xs font-bold border-b border-black mb-2 flex justify-between items-center bg-label px-2 py-1">
+                    <span>備考 / 履歴</span><button onClick={() => { if(!isLocked) onChange({...data, remarks: [...remarks, { id: generateId(), category: 'その他', content: '', date: new Date().toISOString().split('T')[0].replace(/-/g, '/'), status: '', mailSent: '' }]})}} disabled={isLocked} className="text-blue-600 flex items-center text-[10px] border border-blue-200 px-1 bg-white rounded"><Plus className="w-3 h-3 mr-1" /> 追加</button>
+                  </div>
+                  <div className="w-full text-sm">
+                    <div className="grid grid-cols-[80px_100px_1fr_100px_140px_30px] gap-2 border-b border-gray-300 pb-1 mb-1 font-bold text-[10px] text-gray-500 text-center"><div>カテゴリ</div><div>日時</div><div>内容</div><div>状況</div><div>メール送付</div><div/></div>
+                    <div className="overflow-y-auto max-h-48 space-y-1">
+                      {remarks.map((rmk, idx) => (
+                        <div key={rmk.id} className="grid grid-cols-[80px_100px_1fr_100px_140px_30px] gap-2 items-center hover:bg-gray-50 p-1 border-b border-gray-100 last:border-none">
+                          <div><select className="w-full border border-gray-300 text-[10px] p-0.5 bg-white" value={rmk.category || 'その他'} onChange={e => updateRemark(idx, 'category', e.target.value)} disabled={isLocked}><option value="請求">請求</option><option value="出荷">出荷</option><option value="その他">その他</option></select></div>
+                          <div><input className="w-full border-b border-gray-200 text-[10px] text-center" value={rmk.date || ''} onChange={e => updateRemark(idx, 'date', e.target.value)} disabled={isLocked} /></div>
+                          <div><input className="w-full border-b border-gray-200 text-xs" value={rmk.content || ''} onChange={e => updateRemark(idx, 'content', e.target.value)} disabled={isLocked} /></div>
+                          <div><input className="w-full border-b border-gray-200 text-[10px] text-center" value={rmk.status || ''} onChange={e => updateRemark(idx, 'status', e.target.value)} disabled={isLocked} /></div>
+                          <div className="flex items-center gap-1"><input className="flex-1 border-b border-gray-200 text-[9px]" value={rmk.mailSent || ''} onChange={e => updateRemark(idx, 'mailSent', e.target.value)} disabled={isLocked} /><button onClick={() => { const now = new Date(); updateRemark(idx, 'mailSent', "済: " + (now.getMonth()+1) + "/" + now.getDate()); }} disabled={isLocked} className="text-blue-500"><Mail className="w-3 h-3" /></button></div>
+                          <div className="text-center"><button onClick={() => { const newRemarks = [...remarks]; newRemarks.splice(idx, 1); onChange({...data, remarks: newRemarks}); }} disabled={isLocked} className="text-gray-300 hover:text-red-500"><Trash2 className="w-3 h-3" /></button></div>
                         </div>
-                      );
-                    })}
-                    
-                    <div className="p-2 border-t border-gray-300 bg-gray-50 print-hidden text-center flex justify-center space-x-4">
-                      <button onClick={addScheduleRow} disabled={isLocked} className={`text-blue-600 hover:text-blue-800 text-xs font-bold flex items-center justify-center bg-white px-4 py-1 rounded border border-blue-200 shadow-sm hover:bg-blue-50 ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}><Plus className="w-3 h-3 mr-1" /> 行を追加する</button>
-                      <button onClick={addExtensionRow} disabled={isLocked} className={`text-pink-600 hover:text-pink-800 text-xs font-bold flex items-center justify-center bg-white px-4 py-1 rounded border border-pink-200 shadow-sm hover:bg-pink-50 ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}><Clock className="w-3 h-3 mr-1" /> 延長</button>
-                    </div>
-                  </div>
-                )}
-
-                <div className="grid grid-cols-12 gap-6 mt-6">
-                  <div className="col-span-12 border border-black p-3">
-                    <div className="text-xs font-bold border-b border-black mb-2 flex justify-between items-center">
-                      <span>備考 / 履歴</span><button onClick={addRemark} disabled={isLocked} className={`text-blue-600 hover:text-blue-800 flex items-center text-xs ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}><Plus className="w-3 h-3 mr-1" /> 追加</button>
-                    </div>
-                    <div className="w-full text-sm">
-                      <div className="grid grid-cols-[80px_100px_1fr_100px_140px_30px] gap-2 border-b border-gray-300 pb-1 mb-1 font-bold text-xs bg-gray-100 p-1"><div>カテゴリ</div><div>日時</div><div>内容</div><div>状況</div><div>メール送付</div><div></div></div>
-                      <div className="overflow-y-auto max-h-48">
-                        {remarks.map((rmk, idx) => (
-                          <div key={rmk.id} className="grid grid-cols-[80px_100px_1fr_100px_140px_30px] gap-2 mb-1 items-center hover:bg-gray-50 p-1">
-                            <div><select className={`w-full border border-gray-300 text-xs p-1 bg-white ${isLocked ? 'input-locked' : ''}`} value={rmk.category || 'その他'} onChange={e => updateRemark(idx, 'category', e.target.value)} disabled={isLocked}><option value="請求">請求</option><option value="出荷">出荷</option><option value="その他">その他</option></select></div>
-                            <div><input className={`w-full border-b border-gray-300 outline-none text-xs ${isLocked ? 'input-locked' : ''}`} value={rmk.date || ''} onChange={e => updateRemark(idx, 'date', e.target.value)} disabled={isLocked} placeholder="日付" /></div>
-                            <div><input className={`w-full border-b border-gray-300 outline-none text-sm ${isLocked ? 'input-locked' : ''}`} value={rmk.content || ''} onChange={e => updateRemark(idx, 'content', e.target.value)} disabled={isLocked} /></div>
-                            <div><input className={`w-full border-b border-gray-300 outline-none text-xs ${isLocked ? 'input-locked' : ''}`} value={rmk.status || ''} onChange={e => updateRemark(idx, 'status', e.target.value)} disabled={isLocked} /></div>
-                            <div className="flex items-center"><input className={`flex-1 border-b border-gray-300 outline-none text-xs mr-1 ${isLocked ? 'input-locked' : ''}`} value={rmk.mailSent || ''} onChange={e => updateRemark(idx, 'mailSent', e.target.value)} disabled={isLocked} placeholder="-" /><button onClick={() => markMailSent(idx)} disabled={isLocked} className={`text-blue-500 hover:text-blue-700 ${isLocked ? 'opacity-50 cursor-not-allowed' : ''}`}><Mail className="w-4 h-4" /></button></div>
-                            <div className="text-center"><button onClick={() => deleteRemark(idx)} disabled={isLocked} className={`text-gray-400 hover:text-red-500 ${isLocked ? 'hidden' : ''}`}><Trash2 className="w-4 h-4" /></button></div>
-                          </div>
-                        ))}
-                      </div>
+                      ))}
                     </div>
                   </div>
                 </div>
+
               </div>
           </div>
         );
       };
 
-      // --- 親コンポーネント (タブ管理) ---
+      // 親コンポーネント (タブ管理)
       function App() {
         const [tabs, setTabs] = useState([]);
         const [activeTabId, setActiveTabId] = useState(null);
         const [saveStatus, setSaveStatus] = useState('idle');
         const [loading, setLoading] = useState(true);
-        const [errorMsg, setErrorMsg] = useState('');
-        const [loadedServerItems, setLoadedServerItems] = useState([]);
-        const [loadedServerSchedule, setLoadedServerSchedule] = useState([]);
-
-        // ★ユーザー権限管理
-        // AppSheetから渡された値を初期値として使用
-        const [currentUser, setCurrentUser] = useState({ 
-          id: 'user01', 
-          name: window.APP_CONFIG.userName || '担当者', 
-          role: window.APP_CONFIG.userRole || 'sales' // デフォルトはsales
-        });
-
-        useEffect(() => {
-          loadData(INITIAL_ORDER_NO, INITIAL_SUMMARY_CODE);
-        }, []);
-
-        const loadData = (orderNo, summaryCode) => {
-          if (typeof google !== 'undefined' && google.script) {
-            google.script.run
-              .withSuccessHandler((data) => {
-                document.getElementById('loading').style.display = 'none';
-                if (data.success === false) {
-                   setErrorMsg(data.header ? (data.header.title + "\n" + (data.logs||[]).join("\n")) : "ロードエラー");
-                   setLoading(false);
-                   return;
-                }
-                const processedData = processLoadedData(data);
-                setLoadedServerItems(processedData.items || []);
-                setLoadedServerSchedule(processedData.schedule || []);
-
-                const firstTabId = generateId();
-                const modeTitle = data.mode === 'sales' ? '販売' : (data.mode === 'rental' ? 'レンタル' : '通信');
-                const filteredItems = (processedData.items || []).filter(i => !i.modeType || i.modeType === data.mode);
-                const filteredSchedule = (processedData.schedule || []).filter(s => !s.modeType || s.modeType === data.mode);
-                const sub = filteredItems.reduce((sum, i) => sum + (Number(i.amount)||0), 0) 
-                          + filteredSchedule.reduce((sum, s) => sum + (Number(s.amount)||0), 0);
-                const tax = Math.floor(sub * 0.1);
-
-                const initialTabData = {
-                   ...processedData,
-                   items: filteredItems,
-                   schedule: filteredSchedule,
-                   totals: { subtotal: sub, tax, total: sub+tax }
-                };
-                
-                setTabs([{
-                  id: firstTabId,
-                  title: modeTitle,
-                  mode: data.mode,
-                  data: initialTabData
-                }]);
-                setActiveTabId(firstTabId);
-                setLoading(false);
-              })
-              .withFailureHandler((error) => {
-                document.getElementById('loading').style.display = 'none';
-                setErrorMsg("システムエラー: " + error.message);
-              })
-              .getOrderData(orderNo, summaryCode);
-          } else {
-            // Mock
-            document.getElementById('loading').style.display = 'none';
-            const mockData = {
-               mode: 'rental', // sales, rental, communication
-               header: { formId: "TEST", title: "テスト", orderNo: "TEST-001", customerName: "テスト株式会社", periodStartDate: "2024/01/01", periodEndDate: "2024/06/30" },
-               items: [{id:1, productName:"テスト商品A", quantity:1, unit:"個", unitPrice:1000, amount:1000}],
-               schedule: [], remarks: [], totals: {subtotal:1000, tax:100, total:1100}
-            };
-            const processed = processLoadedData(mockData);
-            const tid = generateId();
-            setLoadedServerItems(processed.items);
-            setLoadedServerSchedule(processed.schedule);
-            setTabs([{ id: tid, title: 'テスト', mode: 'rental', data: processed }]);
-            setActiveTabId(tid);
-            setLoading(false);
-          }
-        };
-
-        const processLoadedData = (data) => {
-          const cleanHeader = data.header || {};
-          const validTechRequests = ["なし", "機械器具設置", "電気通信", "保守点検", "修繕", "その他"];
-          if (cleanHeader.internalMemo && !validTechRequests.includes(cleanHeader.internalMemo)) {
-             cleanHeader.internalMemo = "";
-          }
-          let pType = '従来通り';
-          let pDetail = '';
-          
-          // ★支払条件の初期設定: 保存値があればそれを、なければデフォルト(回収種別２)を使用
-          // ※回収種別１が空、もしくは「従来通り」「振込」で、かつ回収種別２(defaultCollectionMethod)に値がある場合はそちらを優先
-          let methodToUse = cleanHeader.collectionMethod;
-          if ((!methodToUse || methodToUse === "従来通り" || methodToUse === "振込") && cleanHeader.defaultCollectionMethod) {
-             methodToUse = cleanHeader.defaultCollectionMethod;
-          }
-          if (!methodToUse) methodToUse = "";
-          
-          const rawMethod = methodToUse;
-          
-          if (rawMethod === "従来通り" || rawMethod === "" || rawMethod === "振込") {
-             pType = "従来通り";
-          } else if (rawMethod.includes("従来通り以外")) {
-             pType = "従来通り以外";
-             pDetail = rawMethod.replace("従来通り以外", "").trim();
-          } else {
-             pType = "従来通り以外";
-             pDetail = rawMethod;
-          }
-          const validItems = (data.items || []).filter(item => {
-            if (item.quantity === "" || item.quantity === null || item.quantity === undefined) return false;
-            const qty = Number(item.quantity);
-            return !isNaN(qty) && qty !== 0;
-          });
-          return {
-             ...data,
-             header: cleanHeader,
-             items: validItems,
-             schedule: data.schedule || [],
-             paymentConditionType: pType,
-             paymentConditionDetail: pDetail
-          };
-        };
-
-        const handleTabChange = (tabId, newData) => {
-          setTabs(prev => prev.map(t => t.id === tabId ? { ...t, data: newData } : t));
-        };
-
-        const addNewTab = (mode) => {
-          const currentTab = tabs.find(t => t.id === activeTabId);
-          const baseData = currentTab ? currentTab.data : null;
-          const copiedItems = loadedServerItems.map(item => ({
-             ...item,
-             id: generateId(), 
-             modeType: mode 
-          }));
-          let initialSchedule = loadedServerSchedule.filter(s => s.modeType === mode);
-          if (initialSchedule.length === 0 && mode !== 'sales') {
-             initialSchedule = Array(3).fill(null).map((_, i) => ({
-                id: generateId(), count: (i + 1) + '回目', billingDate: '', amount: '', costReference: '', slipNo: '', closingDate: '', note: '', checkStatus: '', modeType: mode, rowOrderNo: ''
-             }));
-          }
-          const sub = copiedItems.reduce((sum, i) => sum + (Number(i.amount)||0), 0) 
-                    + initialSchedule.reduce((sum, s) => sum + (Number(s.amount)||0), 0);
-          const tax = Math.floor(sub * 0.1);
-          const newId = generateId();
-          const title = mode === 'sales' ? '販売' : (mode === 'rental' ? 'レンタル' : '通信');
-          const newData = {
-             mode: mode,
-             header: { 
-               ...(baseData?.header || {}), 
-               orderNo: baseData?.header?.orderNo || "",
-               periodStartDate: "", periodEndDate: "" 
-             },
-             items: copiedItems, 
-             schedule: initialSchedule,
-             remarks: [],
-             totals: { subtotal: sub, tax, total: sub+tax },
-             paymentConditionType: baseData?.paymentConditionType || '従来通り',
-             paymentConditionDetail: baseData?.paymentConditionDetail || ''
-          };
-          setTabs([...tabs, { id: newId, title, mode, data: newData }]);
-          setActiveTabId(newId);
-        };
-
-        const removeTab = (e, tabId) => {
-          e.stopPropagation();
-          if (tabs.length <= 1) {
-            alert("最後のタブは削除できません。");
-            return;
-          }
-          if (!confirm("このシート（タブ）を削除しますか？\n入力内容は失われます。")) return;
-          const newTabs = tabs.filter(t => t.id !== tabId);
-          setTabs(newTabs);
-          if (activeTabId === tabId) setActiveTabId(newTabs[0].id);
-        };
-
-        const handleSave = (tabId, type = 'temporary') => {
-          const targetTab = tabs.find(t => t.id === tabId);
-          if (!targetTab) return;
-          
-          const actionName = type === 'submit' ? '提出' : '一時保存';
-          const isSubmit = type === 'submit';
-          
-          if(!confirm(`「${targetTab.title}」タブの内容を${actionName}しますか？${isSubmit ? '\n※提出後は編集できなくなります' : ''}`)) return;
-          
-          document.getElementById('loading').style.display = 'flex';
-          setSaveStatus('saving');
-          const d = targetTab.data;
-          let combinedMethod = d.paymentConditionType === "従来通り" ? "従来通り" : "従来通り以外" + (d.paymentConditionDetail ? (" " + d.paymentConditionDetail) : "");
-          
-          // 提出ボタンならステータスを'submitted'に強制変更
-          const newDataStatus = isSubmit ? 'submitted' : d.header.dataStatus;
-          
-          const updatedHeader = { ...d.header, collectionMethod: combinedMethod, dataStatus: newDataStatus };
-          
-          // 即座にタブの状態も更新（再レンダリングでロック状態を反映するため）
-          if (isSubmit) {
-             handleTabChange(tabId, { ...d, header: updatedHeader });
-          }
-
-          const saveData = {
-            orderNo: d.header.orderNo,
-            mode: d.mode, 
-            header: updatedHeader,
-            items: d.items, schedule: d.schedule, remarks: d.remarks, totals: d.totals,
-            updatedAt: new Date().toISOString()
-          };
-          
-          if (typeof google !== 'undefined' && google.script) {
-            google.script.run.withSuccessHandler((res) => {
-                document.getElementById('loading').style.display = 'none';
-                setSaveStatus('saved');
-                alert(res.message);
-                setTimeout(() => setSaveStatus('idle'), 3000);
-              }).withFailureHandler((err) => {
-                document.getElementById('loading').style.display = 'none';
-                setSaveStatus('error');
-                alert("保存エラー: " + err);
-              }).saveOrderData(saveData);
-          } else {
-             setTimeout(() => {
-                document.getElementById('loading').style.display = 'none';
-                setSaveStatus('saved');
-                alert(`${actionName}しました(Mock)`);
-             }, 1000);
-          }
-        };
-
-        const handleExportExcel = (tabId) => {
-           const targetTab = tabs.find(t => t.id === tabId);
-           if (!targetTab) return;
-           if (!confirm(`「${targetTab.title}」タブのExcelを生成しますか？`)) return;
-           document.getElementById('loading').style.display = 'flex';
-           const d = targetTab.data;
-           let combinedMethod = d.paymentConditionType === "従来通り" ? "従来通り" : "従来通り以外" + (d.paymentConditionDetail ? (" " + d.paymentConditionDetail) : "");
-           const updatedHeader = { ...d.header, collectionMethod: combinedMethod };
-           const saveData = { orderNo: d.header.orderNo, mode: d.mode, header: updatedHeader, items: d.items, schedule: d.schedule, remarks: d.remarks, totals: d.totals };
-           if (typeof google !== 'undefined' && google.script) {
-            google.script.run.withSuccessHandler((res) => {
-                document.getElementById('loading').style.display = 'none';
-                if (res.success) { window.open(res.url, '_blank'); alert(res.message); } else { alert(res.message); }
-              }).withFailureHandler((err) => {
-                document.getElementById('loading').style.display = 'none'; alert("Excel生成エラー: " + err);
-              }).generateOrderSheet(saveData);
-           }
-        };
-        
         const [addMenuOpen, setAddMenuOpen] = useState(false);
 
-        if (errorMsg) return <div className="p-10 text-center bg-red-50 min-h-screen text-red-600 font-bold"><pre>{errorMsg}</pre></div>;
+        useEffect(() => {
+          if (typeof google !== 'undefined' && google.script) {
+            google.script.run.withSuccessHandler((data) => {
+              const loadingEl = document.getElementById('loading');
+              if (loadingEl) loadingEl.style.display = 'none';
+              
+              const tid = generateId();
+              const initialStatus = data.header?.dataStatus || 'official';
+              const initialMode = CONFIG.initialSummaryCode === '65' ? 'rental' : (data.mode || 'sales');
+              
+              setTabs([{ 
+                id: tid, 
+                title: initialMode === 'rental' ? 'レンタル' : (initialMode === 'sales' ? '販売' : '通信'), 
+                mode: initialMode, 
+                data: { ...data, header: { ...data.header, dataStatus: initialStatus } } 
+              }]);
+              setActiveTabId(tid);
+              setLoading(false);
+            }).getOrderData(CONFIG.initialOrderNo, CONFIG.initialSummaryCode);
+          } else {
+            // Mockデータ
+            setTimeout(() => {
+               const loadingEl = document.getElementById('loading');
+               if (loadingEl) loadingEl.style.display = 'none';
+               setLoading(false);
+            }, 800);
+          }
+        }, []);
+
+        const addNewTab = (newMode) => {
+           const currentTab = tabs.find(t => t.id === activeTabId);
+           const newId = generateId();
+           const newTitle = newMode === 'rental' ? 'レンタル' : (newMode === 'communication' ? '通信費' : '販売');
+           const newData = JSON.parse(JSON.stringify(currentTab.data));
+           newData.mode = newMode;
+           newData.header.dataStatus = 'official';
+           setTabs([...tabs, { id: newId, title: newTitle, mode: newMode, data: newData }]);
+           setActiveTabId(newId);
+           setAddMenuOpen(false);
+        };
+
+        const handleSave = (type) => {
+          const target = tabs.find(t => t.id === activeTabId);
+          if(!target) return;
+          const label = type === 'submit' ? '提出' : '一時保存';
+          if(!confirm(`${label}してもよろしいですか？`)) return;
+          
+          setSaveStatus('saving');
+          const finalStatus = type === 'submit' ? 'submitted' : target.data.header.dataStatus;
+          const finalData = { 
+            ...target.data, 
+            header: { ...target.data.header, dataStatus: finalStatus },
+            userName: CONFIG.userName,
+            mode: target.mode 
+          };
+
+          if (typeof google !== 'undefined' && google.script) {
+            google.script.run.withSuccessHandler(() => { 
+              setSaveStatus('saved'); 
+              setTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, data: finalData } : t));
+              setTimeout(()=>setSaveStatus('idle'), 3000); 
+            }).saveOrderData(finalData);
+          }
+        };
+
         if (loading) return null;
 
         return (
-          <div className="min-h-screen bg-gray-200 p-6 font-sans text-base print-full print:p-0 print:bg-white text-gray-900 flex flex-col items-center pb-40">
-            {/* デモ用ヘッダーは削除済み */}
-
+          <div className="min-h-screen bg-gray-200 p-6 flex flex-col items-center pb-40">
             <div id="tab-bar" className="w-full max-w-[1100px] flex items-end space-x-1 mb-0 print-hidden">
                {tabs.map(tab => (
-                 <div key={tab.id} onClick={() => setActiveTabId(tab.id)} className={`px-4 py-2 rounded-t-lg font-bold text-sm cursor-pointer flex items-center border-t border-x relative group transition-colors ${activeTabId === tab.id ? 'tab-active shadow-sm -mb-px z-10' : 'tab-inactive hover:bg-gray-300'}`} style={{ height: '42px' }}>
+                 <div key={tab.id} onClick={() => setActiveTabId(tab.id)} className={`px-6 py-2 rounded-t-lg font-bold text-sm cursor-pointer border-t border-x relative transition-all ${activeTabId === tab.id ? 'tab-active shadow-sm -mb-px z-10' : 'tab-inactive bg-gray-300 hover:bg-gray-100'}`} style={{ height: '42px' }}>
                     <span className="mr-2">{tab.title}</span>
-                    <button onClick={(e) => removeTab(e, tab.id)} className="text-gray-400 hover:text-red-500 rounded-full p-0.5"><X className="w-3 h-3" /></button>
                  </div>
                ))}
                <div className="relative">
                  <button onClick={() => setAddMenuOpen(!addMenuOpen)} className="px-3 py-2 bg-gray-600 text-white rounded-t-lg hover:bg-gray-700 transition-colors flex items-center h-[42px] font-bold text-xs"><Plus className="w-4 h-4 mr-1" /> 追加</button>
                  {addMenuOpen && (
                    <div className="absolute top-10 left-0 bg-white shadow-xl rounded border border-gray-300 w-32 z-50 overflow-hidden">
-                      <button onClick={() => { addNewTab('sales'); setAddMenuOpen(false); }} className="block w-full text-left px-4 py-2 hover:bg-blue-50 text-sm">販売</button>
-                      <button onClick={() => { addNewTab('rental'); setAddMenuOpen(false); }} className="block w-full text-left px-4 py-2 hover:bg-green-50 text-sm">レンタル</button>
-                      <button onClick={() => { addNewTab('communication'); setAddMenuOpen(false); }} className="block w-full text-left px-4 py-2 hover:bg-purple-50 text-sm">通信費</button>
+                      <button onClick={() => addNewTab('sales')} className="block w-full text-left px-4 py-2 hover:bg-blue-50 text-sm">販売</button>
+                      <button onClick={() => addNewTab('rental')} className="block w-full text-left px-4 py-2 hover:bg-green-50 text-sm">レンタル</button>
+                      <button onClick={() => addNewTab('communication')} className="block w-full text-left px-4 py-2 hover:bg-purple-50 text-sm">通信費</button>
                    </div>
                  )}
                </div>
             </div>
             {tabs.map(tab => (
-              <SingleOrderSheet key={tab.id} tabId={tab.id} data={tab.data} isActive={activeTabId === tab.id} onChange={(newData) => handleTabChange(tab.id, newData)} onSave={handleSave} onExportExcel={handleExportExcel} allTabs={tabs} saveStatus={saveStatus} currentUser={currentUser} />
+              <SingleOrderSheet key={tab.id} tabId={tab.id} data={tab.data} isActive={activeTabId === tab.id} currentUser={{role: CONFIG.userRole}}
+                onChange={(newData) => setTabs(prev => prev.map(t => t.id === tab.id ? {...t, data: newData} : t))} 
+                onSave={handleSave} onExportExcel={() => { if(typeof google !== 'undefined') google.script.run.generateOrderSheet(tab.data); }} saveStatus={saveStatus} />
             ))}
           </div>
         );
