@@ -6,7 +6,8 @@
  * ■設定エリア
  */
 const SPREADSHEET_ID = "1L2DgOm3gfEZMwoe2TDjzBJuq5cHB2SlBlwg6vifg5IE";
-const TEMPLATE_SS_ID = "14j2dHjfnAjoxdYPUDQnMdJ5dTnBukOis"; 
+// テンプレートID (ユーザー指定のもの)
+const TEMPLATE_SS_ID = "1pyePh1YXZdVqJqPbvjKjkN28I8DrY-5nMAjt3MGQE0E"; 
 const DESTINATION_FOLDER_ID = "1-k5u4OCIw31Huwqco0MYkH6ZHYR9_g3G"; 
 const APPSHEET_FOLDER_NAME = "受注兼発送依頼書_ファイル保存場所";
 
@@ -24,7 +25,7 @@ function doGet(e) {
   try { DriveApp.getFiles(); } catch (e) {} 
   var template = HtmlService.createTemplateFromFile('index');
   
-  template.initialOrderNo = e.parameter.orderNo || "232922";
+  template.initialOrderNo = e.parameter.orderNo || "";
   template.initialSummaryCode = e.parameter.summaryCode || ""; 
   
   var paramUserName = e.parameter.userName || "";
@@ -37,7 +38,8 @@ function doGet(e) {
   }
 
   template.userTitle = staffInfo.title || "";
-  template.userName = paramUserName || "担当者";
+  // 修正：IDではなくマスタから取得した「氏名」をアプリに渡す
+  template.userName = staffInfo.name || paramUserName || "担当者";
 
   return template.evaluate()
     .setTitle('受注兼発送依頼書')
@@ -46,14 +48,15 @@ function doGet(e) {
 }
 
 function getStaffInfo(staffCode) {
-  if (!staffCode) return { role: "", title: "" };
+  if (!staffCode) return { role: "", title: "", name: "" };
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const sheet = ss.getSheetByName(SHEETS.STAFF);
-    if (!sheet) return { role: "", title: "" };
+    if (!sheet) return { role: "", title: "", name: "" };
     const data = sheet.getDataRange().getValues();
     const headers = data[0].map(h => String(h).trim());
     const codeIdx = headers.indexOf("担当者コード");
+    const nameIdx = headers.indexOf("担当者名");
     const roleIdx = headers.indexOf("権限");
     const titleIdx = headers.indexOf("役職");
     
@@ -62,14 +65,15 @@ function getStaffInfo(staffCode) {
       if (cleanId(data[i][codeIdx]) === targetCode) {
         return {
           role: roleIdx !== -1 ? String(data[i][roleIdx]).trim() : "",
-          title: titleIdx !== -1 ? String(data[i][titleIdx]).trim() : ""
+          title: titleIdx !== -1 ? String(data[i][titleIdx]).trim() : "",
+          name: nameIdx !== -1 ? String(data[i][nameIdx]).trim() : ""
         };
       }
     }
   } catch (e) {
     console.error("getStaffInfo Error: " + e.toString());
   }
-  return { role: "", title: "" };
+  return { role: "", title: "", name: "" };
 }
 
 function convertCollectionDate(code) {
@@ -127,19 +131,49 @@ function generateOrderSheet(data) {
     const tempSheet = tempSs.getSheets()[0];
 
     const h = data.header;
-    safeSet(tempSheet, "B3", h.orderNo); 
-    safeSet(tempSheet, "G2", h.date);    
-    safeSet(tempSheet, "D5", h.customerName);
-    
-    const itemStartRow = 15;
+
+    const replacements = {
+      "{受注No}": h.orderNo,
+      "{見積書No}": h.estimateNo,
+      "{受注日}": h.date,
+      "{得意先名}": h.customerName,
+      "{支店名}": h.branchName,
+      "{郵便番号}": h.customerZipCode,
+      "{得意先住所}": h.customerAddress,
+      "{会社TEL}": h.customerTel,
+      "{会社FAX}": h.customerFax,
+      "{得意先備考}": h.customerNote,
+      "{直送先名}": h.shipName,
+      "{直送先住所}": h.shipAddress,
+      "{直送先TEL}": h.shipTel,
+      "{直送先担当者名}": h.shipRep,
+      "{請求締日}": h.closingDate,
+      "{支払日}": h.paymentDate,
+      "{回収種別}": h.collectionMethod,
+      "{レンタルID}": h.rentalId,
+      "{現場名}": h.siteName,
+      "{期間開始}": h.periodStartDate,
+      "{期間終了}": h.periodEndDate,
+      "{作成担当}": h.approvalCreator?.name,
+      "{確認担当}": h.approvalCheck?.name,
+      "{部長}": h.approvalManager?.name,
+      "{社長}": h.approvalPresident?.name
+    };
+
+    for (const [placeholder, value] of Object.entries(replacements)) {
+      const safeValue = (value === undefined || value === null) ? "" : String(value);
+      tempSheet.createTextFinder(placeholder).replaceAllWith(safeValue);
+    }
+
+    const itemStartRow = 15; 
     data.items.forEach((item, i) => {
       const r = itemStartRow + i;
-      safeSet(tempSheet, "A" + r, item.productName);
-      safeSet(tempSheet, "C" + r, item.quantity);
-      safeSet(tempSheet, "D" + r, item.unit);
-      safeSet(tempSheet, "E" + r, item.unitPrice);
-      safeSet(tempSheet, "F" + r, item.amount);
-      safeSet(tempSheet, "G" + r, item.note);
+      if (item.productName) safeSet(tempSheet, "A" + r, item.productName);
+      if (item.quantity) safeSet(tempSheet, "C" + r, item.quantity);
+      if (item.unit) safeSet(tempSheet, "D" + r, item.unit);
+      if (item.unitPrice) safeSet(tempSheet, "E" + r, item.unitPrice);
+      if (item.amount) safeSet(tempSheet, "F" + r, item.amount);
+      if (item.note) safeSet(tempSheet, "G" + r, item.note);
     });
 
     SpreadsheetApp.flush(); 
@@ -147,7 +181,12 @@ function generateOrderSheet(data) {
       sheet.getRange(targetRowIndex, fileColIdx + 1).setValue(APPSHEET_FOLDER_NAME + "/" + fileName);
     }
 
-    return { success: true, url: "https://docs.google.com/spreadsheets/d/" + tempFile.getId() + "/export?format=xlsx", message: "Excelを発行しました" };
+    return { 
+      success: true, 
+      url: "https://docs.google.com/spreadsheets/d/" + tempFile.getId() + "/export?format=xlsx", 
+      driveUrl: tempFile.getUrl(),
+      message: "Excelを発行しました" 
+    };
   } catch (e) {
     return { success: false, message: "Excel生成エラー: " + e.message };
   }
@@ -199,6 +238,15 @@ function getOrderData(orderNo, summaryCode) {
     let headerRowObj = {};
     headerValues.forEach((h, i) => headerRowObj[String(h).trim()] = headerRowRaw[i]);
 
+    const sheetSummaryCode = headerRowObj['摘要コード'] ? String(headerRowObj['摘要コード']).trim() : "";
+    if (sheetSummaryCode === '65') {
+      mode = 'rental';
+    } else if (sheetSummaryCode === '83') {
+      mode = 'communication';
+    } else if (sheetSummaryCode) {
+      mode = 'sales';
+    }
+
     const getRelatedData = (sheetName) => {
       const s = ss.getSheetByName(sheetName);
       if (!s) return [];
@@ -231,7 +279,6 @@ function getOrderData(orderNo, summaryCode) {
       }
       return mapped;
     }).filter(item => {
-      // 要件：数量が空、null、非数値、0であるものは非表示にする
       const qty = Number(item.quantity);
       return item.quantity !== "" && item.quantity != null && !isNaN(qty) && qty !== 0;
     });
@@ -258,13 +305,10 @@ function approveOrder(orderNo, stampType, userName) {
   try {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const today = Utilities.formatDate(new Date(), "JST", "yyyy/MM/dd");
-    const fieldPrefix = stampType; 
-    
     const update = {};
-    update[fieldPrefix + '_ステータス'] = "済";
-    update[fieldPrefix + '_氏名'] = userName;
-    update[fieldPrefix + '_日付'] = today;
-    
+    update[stampType + '_ステータス'] = "済";
+    update[stampType + '_氏名'] = userName;
+    update[stampType + '_日付'] = today;
     updateOrAddRow(ss, SHEETS.HEADER, '受注No', orderNo, update);
     return { success: true };
   } catch (e) {
@@ -410,7 +454,8 @@ function saveOrderData(saveData) {
         '回数': sch.count, '請求売上日': sch.billingDate, '請求金額': sch.amount, 
         '原価金額': sch.costReference, '伝票No': sch.slipNo, '締め日': sch.closingDate, 'チェック状況': sch.checkStatus,
         '種別': saveData.mode,
-        '行受注No': sch.rowOrderNo
+        '行受注No': sch.rowOrderNo,
+        '備考': sch.note 
       };
       updateOrAddRow(ss, SHEETS.SCHEDULE, '請求ID', sch.id, dbSch);
     });
@@ -484,7 +529,6 @@ function mapHeaderData(row, mode, staffMap, customerNoteMap, customerMasterMap) 
     paymentDateVal = convertCollectionDate(customerMasterMap[customerCode].collectionCode);
   }
 
-  // 請求締日の初期値
   let closingDateVal = getVal('請求締日');
   if (!closingDateVal && customerMasterMap[customerCode]) {
     closingDateVal = customerMasterMap[customerCode].closingDate;
@@ -493,12 +537,14 @@ function mapHeaderData(row, mode, staffMap, customerNoteMap, customerMasterMap) 
   return {
     formId: "様式 03-3BU-004-6 170410",
     title: mode === 'sales' ? "受注兼発送依頼書" : (mode === 'rental' ? "レンタル受注兼発送依頼書" : "通信費 受注兼発送依頼書"),
-    tag: getVal('タグ'), orderNo: getVal('受注No'), estimateNo: "", 
+    tag: getVal('タグ'), orderNo: getVal('受注No'), estimateNo: getVal('見積書No'), 
     date: formatDate(row['受注日']), customerCode: customerCode, customerName: getVal('得意先名'),
+    branchName: getVal('支店名'), 
     customerZipCode: getVal('郵便番号'), customerAddress: (getVal('住所１')||"") + (getVal('住所２')||""),
     customerTel: getVal('会社TEL'), customerFax: getVal('会社FAX'),
     customerNote: customerNoteMap[customerCode] || "", 
     shipName: getVal('直送先名'), shipAddress: getVal('直送先名称_出荷明細'),
+    shipTel: getVal('直送先TEL'), 
     shipRep: getVal('直送先担当者名') || "", 
     salesRepInternalMain: staffName, 
     salesRepClient: getVal('先方担当者名'), 
@@ -506,6 +552,11 @@ function mapHeaderData(row, mode, staffMap, customerNoteMap, customerMasterMap) 
     paymentDate: paymentDateVal,
     collectionMethod: getVal('回収種別１'),
     dataStatus: getVal('データステータス') || 'official',
+    rentalId: getVal('レンタルID'), 
+    siteName: getVal('現場名'), 
+    periodStartDate: getVal('期間開始'), 
+    periodEndDate: getVal('期間終了'),   
+    // 修正：既存の印影データを正しく読み込む
     approvalCreator: { status: getVal('作成_ステータス'), name: getVal('作成_氏名'), date: getVal('作成_日付') },
     approvalCheck: { status: getVal('確認_ステータス'), name: getVal('確認_氏名'), date: getVal('確認_日付') },
     approvalManager: { status: getVal('部長_ステータス'), name: getVal('部長_氏名'), date: getVal('部長_日付') },
@@ -527,7 +578,7 @@ function mapScheduleData(row) {
   return {
     id: row['請求ID'], type: 'schedule_row', count: row['回数'], billingDate: formatDate(row['請求売上日']), amount: row['請求金額'],
     costReference: row['原価金額'], slipNo: row['伝票No'], closingDate: formatDate(row['締め日']), checkStatus: row['チェック状況'],
-    modeType: row['種別'], rowOrderNo: row['行受注No']
+    modeType: row['種別'], rowOrderNo: row['行受注No'], note: row['備考']
   };
 }
 
@@ -540,12 +591,33 @@ function mapRemarkData(row) {
 function reverseMapHeader(header) {
   const base = {
     '受注日': header.date, '得意先コード': header.customerCode, '得意先名': header.customerName,
+    '支店名': header.branchName, 
+    '見積書No': header.estimateNo, 
     '直送先名': header.shipName, '先方担当者名': header.salesRepClient, 
     '請求締日': header.closingDate, '支払日': header.paymentDate, '回収種別１': header.collectionMethod,
     '郵便番号': header.customerZipCode, '住所１': header.customerAddress, '会社TEL': header.customerTel,
     'データステータス': header.dataStatus,
     '配送方法': header.deliveryMethod1,
-    '直送先担当者名': header.shipRep
+    '直送先担当者名': header.shipRep,
+    '直送先TEL': header.shipTel, 
+    'レンタルID': header.rentalId, 
+    '現場名': header.siteName, 
+    '期間開始': header.periodStartDate, 
+    '期間終了': header.periodEndDate,   
+    '得意先備考': header.customerNote,
+    // 修正：印影データの保存を確実にする
+    '作成_ステータス': header.approvalCreator?.status,
+    '作成_氏名': header.approvalCreator?.name,
+    '作成_日付': header.approvalCreator?.date,
+    '確認_ステータス': header.approvalCheck?.status,
+    '確認_氏名': header.approvalCheck?.name,
+    '確認_日付': header.approvalCheck?.date,
+    '部長_ステータス': header.approvalManager?.status,
+    '部長_氏名': header.approvalManager?.name,
+    '部長_日付': header.approvalManager?.date,
+    '社長_ステータス': header.approvalPresident?.status,
+    '社長_氏名': header.approvalPresident?.name,
+    '社長_日付': header.approvalPresident?.date
   };
   for (let i = 1; i <= 10; i++) {
     if (header[`shipDate${i}`] !== undefined) base[`出荷日${i}`] = header[`shipDate${i}`];
